@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.env
+
+# State & token files
+.spin-sync-state.json
+.strava_refresh_token
+*.log
+
+# OS
+.DS_Store
