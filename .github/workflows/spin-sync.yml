@@ -74,8 +74,6 @@ jobs:
           STRAVA_REFRESH_TOKEN:  ${{ secrets.STRAVA_REFRESH_TOKEN }}
           GARMIN_EMAIL:          ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD:       ${{ secrets.GARMIN_PASSWORD }}
-          GARMIN_DEVICE_UNIT_ID: ${{ secrets.GARMIN_DEVICE_UNIT_ID }}
-          GARMIN_PRODUCT_ID:     ${{ secrets.GARMIN_PRODUCT_ID }}
           # Look back 2 hours so we don't miss a workout if the cron ran late
           LOOKBACK_SECONDS:      "7200"
         run: python src/sync.py
