@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/install_cron.sh — Install a local launchd job (macOS) or cron job (Linux)
-# that runs spin-sync every 30 minutes.
+# timed ~15 min after each spin class ends.
 #
 # Usage:
 #   chmod +x scripts/install_cron.sh
@@ -91,9 +91,8 @@ WRAPPER
 else
   # ---------- Linux: cron ----------
   # Class schedule with 15-min buffer after each class ends (local ET times).
-  # Two entries per slot cover EDT (UTC-4) and EST (UTC-5) — only one fires on
-  # any given day since cron uses the system clock which tracks DST automatically.
-  # The state file prevents double-uploads if both happen to fire on a DST boundary.
+  # One entry per slot — cron uses the system clock which tracks DST automatically,
+  # so a single local-time entry covers both EDT and EST without duplication.
   #
   # Monday   08:15 ET (class ends 08:00)
   # Tuesday  13:00 ET (class ends 12:45)
