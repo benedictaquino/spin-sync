@@ -30,7 +30,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
-from garminconnect import Garmin
 
 from merge_fit import merge, RecordSnapshot
 
@@ -52,8 +51,9 @@ STRAVA_CLIENT_ID     = os.environ["STRAVA_CLIENT_ID"]
 STRAVA_CLIENT_SECRET = os.environ["STRAVA_CLIENT_SECRET"]
 STRAVA_REFRESH_TOKEN = os.environ["STRAVA_REFRESH_TOKEN"]
 
-GARMIN_EMAIL    = os.environ["GARMIN_EMAIL"]
-GARMIN_PASSWORD = os.environ["GARMIN_PASSWORD"]
+GARMIN_SESSION_FILE = Path(
+    os.environ.get("GARMIN_SESSION_FILE", Path.home() / ".spin-sync-garmin-session.json")
+)
 
 # Strava types produced by the ICG app
 TARGET_ACTIVITY_TYPES = {"VirtualRide", "Ride"}
@@ -239,16 +239,84 @@ def strava_delete_activity(activity_id: int, access_token: str) -> bool:
 # Garmin Connect helpers
 # ---------------------------------------------------------------------------
 
-_garmin_client: Garmin | None = None
+class GarminSession:
+    """
+    Thin Garmin Connect API client that authenticates via browser session
+    cookies saved by scripts/garmin_auth.py.
+
+    Uses the same Connect web endpoints as the garminconnect library, but
+    loads credentials from a cookie file rather than performing an SSO login
+    (which Cloudflare now blocks for automated clients).
+    """
+
+    BASE = "https://connect.garmin.com"
+
+    def __init__(self, session_file: Path) -> None:
+        if not session_file.exists():
+            raise FileNotFoundError(
+                f"Garmin session file not found: {session_file}\n"
+                "Run  scripts/garmin_auth.py  to authenticate via browser first."
+            )
+        self._session = requests.Session()
+        self._session.headers.update({
+            "NK": "NT",
+            "X-app-ver": "4.82.0.0",
+        })
+        self._load_cookies(session_file)
+
+    def _load_cookies(self, session_file: Path) -> None:
+        data = json.loads(session_file.read_text())
+        for cookie in data["cookies"]:
+            self._session.cookies.set(
+                cookie["name"],
+                cookie["value"],
+                domain=cookie.get("domain", ".garmin.com"),
+            )
+
+    def get_activities_by_date(self, start_date: str, end_date: str) -> list[dict]:
+        resp = self._session.get(
+            f"{self.BASE}/activitylist-service/activities/search/activities",
+            params={"startDate": start_date, "endDate": end_date, "limit": 100},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def download_fit(self, activity_id: int) -> bytes:
+        resp = self._session.get(
+            f"{self.BASE}/download-service/files/activity/{activity_id}",
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.content
+
+    def delete_activity(self, activity_id: int) -> None:
+        resp = self._session.delete(
+            f"{self.BASE}/activity-service/activity/{activity_id}",
+            timeout=15,
+        )
+        resp.raise_for_status()
+
+    def upload_fit(self, fit_path: Path) -> dict:
+        with open(fit_path, "rb") as f:
+            resp = self._session.post(
+                f"{self.BASE}/upload-service/upload",
+                files={"file": (fit_path.name, f, "application/octet-stream")},
+                timeout=60,
+            )
+        resp.raise_for_status()
+        return resp.json()
 
 
-def garmin_client() -> Garmin:
-    global _garmin_client
-    if _garmin_client is None:
-        _garmin_client = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-        _garmin_client.login()
-        log.info("Logged in to Garmin Connect.")
-    return _garmin_client
+_garmin_session: GarminSession | None = None
+
+
+def garmin_session() -> GarminSession:
+    global _garmin_session
+    if _garmin_session is None:
+        _garmin_session = GarminSession(GARMIN_SESSION_FILE)
+        log.info("Loaded Garmin session from %s", GARMIN_SESSION_FILE)
+    return _garmin_session
 
 
 def garmin_find_matching_activity(start_epoch: int) -> dict | None:
@@ -256,13 +324,12 @@ def garmin_find_matching_activity(start_epoch: int) -> dict | None:
     Find the indoor cycling / cardio watch activity in Garmin Connect that
     corresponds to the ICG session.
     """
-    client = garmin_client()
     date_str = datetime.fromtimestamp(
         start_epoch - TIME_MATCH_TOLERANCE_S, tz=timezone.utc
     ).strftime("%Y-%m-%d")
 
     try:
-        activities = client.get_activities_by_date(date_str, date_str)
+        activities = garmin_session().get_activities_by_date(date_str, date_str)
     except Exception as exc:
         log.warning("Could not fetch Garmin activities for %s: %s", date_str, exc)
         return None
@@ -298,11 +365,8 @@ def garmin_find_matching_activity(start_epoch: int) -> dict | None:
 
 
 def garmin_download_fit(activity_id: int, dest: Path) -> bool:
-    client = garmin_client()
     try:
-        data = client.download_activity(
-            activity_id, dl_fmt=client.ActivityDownloadFormat.ORIGINAL
-        )
+        data = garmin_session().download_fit(activity_id)
     except Exception as exc:
         log.error("Failed to download Garmin activity %s: %s", activity_id, exc)
         return False
@@ -322,16 +386,14 @@ def garmin_download_fit(activity_id: int, dest: Path) -> bool:
 
 def garmin_delete_activity(activity_id: int) -> None:
     try:
-        garmin_client().delete_activity(activity_id)
+        garmin_session().delete_activity(activity_id)
         log.info("Deleted Garmin activity %s.", activity_id)
     except Exception as exc:
         log.warning("Could not delete Garmin activity %s: %s", activity_id, exc)
 
 
 def garmin_upload(fit_path: Path, activity_name: str) -> None:
-    client = garmin_client()
-    with open(fit_path, "rb") as f:
-        result = client.upload_activity(f, fit_path.name)
+    result = garmin_session().upload_fit(fit_path)
     log.info("Uploaded '%s' to Garmin Connect: %s", activity_name, result)
 
 

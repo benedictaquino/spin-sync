@@ -23,11 +23,18 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
+# One-time: install Playwright's Chromium browser
+playwright install chromium
+
 cp .env.example .env
-# Edit .env with credentials
+# Edit .env with Strava credentials only (no Garmin credentials needed)
 
 # One-time: get Strava OAuth refresh token
 python scripts/strava_auth.py
+
+# One-time: authenticate with Garmin Connect via browser
+# (re-run whenever the session expires, typically weeks–months)
+python scripts/garmin_auth.py
 
 # Run manually (requires env vars to be set)
 export $(grep -v '^#' .env | xargs)
@@ -38,7 +45,7 @@ python src/sync.py
 
 Two source files in `src/`:
 
-**`src/sync.py`** — orchestration layer. Handles all API calls (Strava REST, Garmin Connect via `garminconnect` library), state management, and the 8-step sync flow. State is persisted to `~/.spin-sync-state.json` (configurable via `STATE_FILE` env var). Activity matching uses `TIME_MATCH_TOLERANCE_S` (default 10 min) to correlate ICG and watch activities by timestamp.
+**`src/sync.py`** — orchestration layer. Handles all API calls (Strava REST, Garmin Connect via `GarminSession`), state management, and the 8-step sync flow. State is persisted to `~/.spin-sync-state.json` (configurable via `STATE_FILE` env var). Activity matching uses `TIME_MATCH_TOLERANCE_S` (default 10 min) to correlate ICG and watch activities by timestamp.
 
 **`src/merge_fit.py`** — FIT file merging. Uses two different libraries:
 - `fitparse` for reading ICG FIT files (handles non-standard vendor files)
@@ -48,12 +55,14 @@ The merge does a nearest-neighbor lookup (binary search, max 5s gap) to inject I
 
 **`scripts/strava_auth.py`** — one-time OAuth flow to obtain the Strava refresh token.
 
+**`scripts/garmin_auth.py`** — one-time Playwright browser login to capture Garmin Connect session cookies. Saves to `~/.spin-sync-garmin-session.json`. Garmin's SSO is Cloudflare-protected against automated logins, so a real browser is required for the initial auth. Cookies are used directly for all subsequent API calls; re-run when the session expires.
+
 ## Key environment variables
 
 | Variable | Purpose |
 |---|---|
 | `STRAVA_CLIENT_ID/SECRET/REFRESH_TOKEN` | Strava API credentials |
-| `GARMIN_EMAIL/PASSWORD` | Garmin Connect login |
+| `GARMIN_SESSION_FILE` | Path to Garmin session cookies (default `~/.spin-sync-garmin-session.json`) |
 | `LOOKBACK_SECONDS` | How far back to look on first run (default 6h; GitHub Actions uses 2h) |
 | `TIME_MATCH_TOLERANCE_S` | Max gap between ICG and watch start times (default 600s) |
 | `STATE_FILE` | Path to state JSON (default `~/.spin-sync-state.json`) |
@@ -66,8 +75,8 @@ The merge does a nearest-neighbor lookup (binary search, max 5s gap) to inject I
 
 ## Dependencies
 
-- `garminconnect` — unofficial Garmin Connect API client
+- `playwright` — browser automation for Garmin Connect authentication (bypasses Cloudflare)
 - `fit-tool` — FIT file read/write (preserves all message types)
 - `python-fitparse` — FIT file reading (better vendor file compatibility)
-- `requests` — Strava REST API calls
+- `requests` — Strava REST API calls and Garmin Connect API calls
 - `python-dotenv` — loads `.env` file during the one-time Strava auth setup
