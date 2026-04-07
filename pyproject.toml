@@ -21,6 +21,3 @@ dev = [
   "pytest>=9.0.3",
 ]
 
-[tool.pytest.init_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
