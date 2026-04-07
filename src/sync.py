@@ -4,15 +4,11 @@ spin-sync: Auto-sync ICG IC7 spin workouts from Strava to Garmin Connect.
 Flow:
   1. Poll Strava for recent VirtualRide / indoor cycling activities from ICG.
   2. Fetch ICG power/cadence/distance streams from the Strava API.
-  2. Fetch ICG power/cadence/distance streams from the Strava API.
-  3. Find the matching Indoor Cycling activity the Garmin watch auto-synced to
-     Strava (same day, overlapping time window) and delete it — it's empty
-     (no power/cadence) and we don't want the duplicate.
-  4. Find the same watch activity in Garmin Connect and download its .fit file.
-  5. Merge: inject ICG power + cadence into the Garmin watch file second-by-second.
-  6. Delete the original empty watch activity from Garmin Connect.
-  7. Upload the merged file to Garmin Connect.
-  8. Record the Strava activity ID in state to avoid re-processing.
+  3. Find the matching watch activity in Garmin Connect and download its .fit file.
+  4. Merge: inject ICG power + cadence into the Garmin watch file second-by-second.
+  5. Delete the original empty watch activity from Garmin Connect.
+  6. Upload the merged file to Garmin Connect.
+  7. Record the Strava activity ID in state to avoid re-processing.
 
 Result:
   - Strava : one activity (the original ICG recording with all power/cadence data)
@@ -60,9 +56,6 @@ GARMIN_SESSION_FILE = Path(
 # Strava types produced by the ICG app
 TARGET_ACTIVITY_TYPES = {"VirtualRide", "Ride"}
 
-# Strava / Garmin activity types that indicate a plain watch recording
-# (the empty duplicate we want to remove)
-WATCH_ACTIVITY_TYPES_STRAVA = {"Ride", "VirtualRide", "workout"}
 GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio", "cycling", "fitness_equipment", "other"}
 
 # How far back to look on the very first run (seconds)
@@ -170,80 +163,6 @@ def strava_fetch_icg_streams(
     return records
     log.info("Fetched %d stream samples for Strava activity %s.", len(records), activity_id)
     return records
-
-
-def strava_find_watch_duplicate(
-    access_token: str,
-    icg_activity: dict,
-    all_activities: list[dict],
-) -> dict | None:
-    """
-    Find the Garmin watch activity on Strava that is a duplicate of the ICG
-    session — i.e. a ride/workout starting within TIME_MATCH_TOLERANCE_S of
-    the ICG activity but NOT the ICG activity itself.
-
-    The watch activity will have no power data (average_watts is 0 or absent)
-    which is the distinguishing characteristic vs the ICG recording.
-    """
-    icg_start  = strava_activity_start_epoch(icg_activity)
-    icg_id     = icg_activity["id"]
-
-    for act in all_activities:
-        if act["id"] == icg_id:
-            continue
-        if act.get("type") not in WATCH_ACTIVITY_TYPES_STRAVA:
-            continue
-
-        gap_s = abs(strava_activity_start_epoch(act) - icg_start)
-        if gap_s > TIME_MATCH_TOLERANCE_S:
-            continue
-
-        # Guard: don't delete an activity that actually has power data
-        if act.get("average_watts", 0) > 0:
-            log.info(
-                "Skipping Strava activity %s as duplicate candidate — it has "
-                "power data (avg %.0fW). Leaving it intact.",
-                act["id"], act["average_watts"],
-            )
-            continue
-
-        log.info(
-            "Found Strava watch duplicate: '%s' (id=%s, gap=%.0fs, avg_watts=%s)",
-            act.get("name"), act["id"], gap_s, act.get("average_watts", 0),
-        )
-        return act
-
-    return None
-
-
-def strava_delete_activity(activity_id: int, access_token: str) -> bool:
-    """
-    Delete a Strava activity. Requires the activity:write scope.
-    Returns True on success or if already gone.
-    """
-    resp = requests.delete(
-        f"https://www.strava.com/api/v3/activities/{activity_id}",
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=15,
-    )
-    if resp.status_code == 204:
-        log.info("Deleted Strava activity %s.", activity_id)
-        return True
-    if resp.status_code == 404:
-        log.info("Strava activity %s already gone.", activity_id)
-        return True
-    if resp.status_code == 401:
-        log.error(
-            "Strava returned 401 deleting activity %s — access token is expired or "
-            "invalid. Re-run scripts/strava_auth.py and update STRAVA_REFRESH_TOKEN.",
-            activity_id,
-        )
-        return False
-    log.warning(
-        "Could not delete Strava activity %s: HTTP %s %s",
-        activity_id, resp.status_code, resp.text[:200],
-    )
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -516,26 +435,7 @@ def run() -> None:
                 synced_ids.add(strava_id)
                 continue
 
-            # 2. Find and delete the empty Garmin watch duplicate on Strava
-            strava_duplicate = strava_find_watch_duplicate(
-                access_token, icg_activity, all_activities
-            )
-            if strava_duplicate:
-                deleted = strava_delete_activity(strava_duplicate["id"], access_token)
-                if not deleted:
-                    log.warning(
-                        "Strava watch duplicate for '%s' was NOT deleted and will "
-                        "remain until auth is fixed.",
-                        activity_name,
-                    )
-            else:
-                log.info(
-                    "No Strava watch duplicate found for '%s' — either it hasn't "
-                    "synced yet or was already deleted. Continuing.",
-                    activity_name,
-                )
-
-            # 3. Find matching Garmin Connect watch activity
+            # 2. Find matching Garmin Connect watch activity
             garmin_act = garmin_find_matching_activity(start_epoch)
             if garmin_act is None:
                 log.warning(
@@ -548,22 +448,22 @@ def run() -> None:
 
             garmin_act_id = garmin_act["activityId"]
 
-            # 4. Download Garmin watch .fit
+            # 3. Download Garmin watch .fit
             if not garmin_download_fit(garmin_act_id, garmin_fit):
                 log.error("Could not download Garmin watch file %s.", garmin_act_id)
                 continue
 
-            # 5. Merge ICG power/cadence into Garmin watch file
+            # 4. Merge ICG power/cadence into Garmin watch file
             try:
                 merge(garmin_fit, icg_records, merged_fit)
             except Exception as exc:
                 log.error("Merge failed for '%s': %s", activity_name, exc)
                 continue
 
-            # 6. Delete the original empty watch activity from Garmin Connect
+            # 5. Delete the original empty watch activity from Garmin Connect
             garmin_delete_activity(garmin_act_id)
 
-            # 7. Upload merged file to Garmin Connect
+            # 6. Upload merged file to Garmin Connect
             try:
                 garmin_upload(merged_fit, activity_name)
                 synced_ids.add(strava_id)
