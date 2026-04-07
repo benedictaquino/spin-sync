@@ -9,12 +9,11 @@ spin-sync auto-syncs ICG IC7 spin bike workouts from Strava to Garmin Connect. T
 **Flow per workout:**
 1. Poll Strava for new `VirtualRide`/`Ride` activities (ICG source)
 2. Fetch ICG power/cadence/distance data via Strava Streams API
-3. Find and delete the empty Garmin watch duplicate on Strava
-4. Find the matching watch activity in Garmin Connect and download its `.fit`
-5. Merge ICG power/cadence into the Garmin watch `.fit` (preserving HR, Training Effect metadata)
-6. Delete the original empty watch activity from Garmin Connect
-7. Upload the merged `.fit` to Garmin Connect
-8. Record the Strava activity ID in `~/.spin-sync-state.json` to prevent re-processing
+3. Find the matching watch activity in Garmin Connect and download its `.fit`
+4. Merge ICG power/cadence into the Garmin watch `.fit` (preserving HR, Training Effect metadata)
+5. Delete the original empty watch activity from Garmin Connect
+6. Upload the merged `.fit` to Garmin Connect
+7. Record the Strava activity ID in `~/.spin-sync-state.json` to prevent re-processing
 
 ## Setup and running
 
