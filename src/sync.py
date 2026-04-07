@@ -4,6 +4,7 @@ spin-sync: Auto-sync ICG IC7 spin workouts from Strava to Garmin Connect.
 Flow:
   1. Poll Strava for recent VirtualRide / indoor cycling activities from ICG.
   2. Fetch ICG power/cadence/distance streams from the Strava API.
+  2. Fetch ICG power/cadence/distance streams from the Strava API.
   3. Find the matching Indoor Cycling activity the Garmin watch auto-synced to
      Strava (same day, overlapping time window) and delete it — it's empty
      (no power/cadence) and we don't want the duplicate.
@@ -31,6 +32,7 @@ from pathlib import Path
 
 import requests
 
+from merge_fit import merge, RecordSnapshot
 from merge_fit import merge, RecordSnapshot
 
 # ---------------------------------------------------------------------------
@@ -164,6 +166,8 @@ def strava_fetch_icg_streams(
             distance=distance[i] if i < len(distance) else None,
         ))
 
+    log.info("Fetched %d stream samples for Strava activity %s.", len(records), activity_id)
+    return records
     log.info("Fetched %d stream samples for Strava activity %s.", len(records), activity_id)
     return records
 
@@ -500,6 +504,7 @@ def run() -> None:
 
             # 5. Merge ICG power/cadence into Garmin watch file
             try:
+                merge(garmin_fit, icg_records, merged_fit)
                 merge(garmin_fit, icg_records, merged_fit)
             except Exception as exc:
                 log.error("Merge failed for '%s': %s", activity_name, exc)
