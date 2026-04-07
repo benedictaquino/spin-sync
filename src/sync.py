@@ -63,8 +63,6 @@ TARGET_ACTIVITY_TYPES = {"VirtualRide", "Ride"}
 # Strava / Garmin activity types that indicate a plain watch recording
 # (the empty duplicate we want to remove)
 WATCH_ACTIVITY_TYPES_STRAVA = {"Ride", "VirtualRide", "workout"}
-# Includes "fitness_equipment" and "other" to cover the Garmin watch's reported
-# activity type when recording a spin class without a specific sport profile.
 GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio", "cycling", "fitness_equipment", "other"}
 
 # How far back to look on the very first run (seconds)
