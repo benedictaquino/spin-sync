@@ -19,26 +19,24 @@ spin-sync auto-syncs ICG IC7 spin bike workouts from Strava to Garmin Connect. T
 ## Setup and running
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 
 # One-time: install Playwright's Chromium browser
-playwright install chromium
+uv run playwright install chromium
 
 cp .env.example .env
 # Edit .env with Strava credentials only (no Garmin credentials needed)
 
 # One-time: get Strava OAuth refresh token
-python scripts/strava_auth.py
+uv run python scripts/strava_auth.py
 
 # One-time: authenticate with Garmin Connect via browser
 # (re-run whenever the session expires, typically weeks–months)
-python scripts/garmin_auth.py
+uv run python scripts/garmin_auth.py
 
 # Run manually (requires env vars to be set)
 export $(grep -v '^#' .env | xargs)
-python src/sync.py
+uv run python src/sync.py
 ```
 
 ## Architecture
