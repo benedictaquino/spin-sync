@@ -15,6 +15,7 @@ Result:
   - Garmin : one activity (merged file — watch HR/Training Effect + ICG power/cadence)
 """
 
+import base64
 import os
 import sys
 import json
@@ -27,8 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from playwright.sync_api import sync_playwright
 
-from merge_fit import merge, RecordSnapshot
 from merge_fit import merge, RecordSnapshot
 
 # ---------------------------------------------------------------------------
@@ -171,15 +172,14 @@ def strava_fetch_icg_streams(
 
 class GarminSession:
     """
-    Thin Garmin Connect API client that authenticates via browser session
-    cookies saved by scripts/garmin_auth.py.
-
-    Uses the same Connect web endpoints as the garminconnect library, but
-    loads credentials from a cookie file rather than performing an SSO login
-    (which Cloudflare now blocks for automated clients).
+    Garmin Connect API client that drives a persistent Chromium browser via
+    Playwright.  All API calls are made as browser-side fetch() calls so that
+    Garmin's Cloudflare protection and CSRF requirements are satisfied
+    automatically — no manual cookie or token wrangling needed.
     """
 
     BASE = "https://connect.garmin.com"
+    BROWSER_PROFILE_DIR = Path.home() / ".spin-sync-chromium-profile"
 
     def __init__(self, session_file: Path) -> None:
         if not session_file.exists():
@@ -187,61 +187,113 @@ class GarminSession:
                 f"Garmin session file not found: {session_file}\n"
                 "Run  scripts/garmin_auth.py  to authenticate via browser first."
             )
-        self._session = requests.Session()
-        self._session.headers.update({
-            "NK": "NT",
-            "X-app-ver": "4.82.0.0",
-            "Accept": "application/json",
-        })
-        self._load_cookies(session_file)
-
-    def _load_cookies(self, session_file: Path) -> None:
-        data = json.loads(session_file.read_text())
-        # Set cookies as a header to bypass requests' domain-matching logic,
-        # which silently drops cookies whose domain doesn't exactly match the
-        # jar's expectations (e.g. JWT_WEB on .connect.garmin.com).
-        cookie_header = "; ".join(
-            f"{c['name']}={c['value']}" for c in data["cookies"]
+        self._pw = sync_playwright().start()
+        self._context = self._pw.chromium.launch_persistent_context(
+            str(self.BROWSER_PROFILE_DIR),
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
         )
-        self._session.headers["Cookie"] = cookie_header
-        # cf_clearance is bound to the IP + User Agent that solved the
-        # Cloudflare challenge. Use the exact UA from the Playwright session.
-        if ua := data.get("user_agent"):
-            self._session.headers["User-Agent"] = ua
+        self._page = (
+            self._context.pages[0] if self._context.pages else self._context.new_page()
+        )
+        self._csrf_token: str | None = None
+        self._init_session()
+
+    def _init_session(self) -> None:
+        """Navigate to Garmin Connect to establish the browser session and capture CSRF token."""
+        captured: dict = {}
+
+        def on_request(request: object) -> None:
+            if "gc-api/" in request.url and not captured.get("csrf"):  # type: ignore[attr-defined]
+                captured["csrf"] = request.headers.get("connect-csrf-token")  # type: ignore[attr-defined]
+
+        self._page.on("request", on_request)
+        self._page.goto(f"{self.BASE}/app/activities", wait_until="networkidle", timeout=30_000)
+        self._page.remove_listener("request", on_request)
+        self._csrf_token = captured.get("csrf")
+        log.info("Garmin browser session ready (CSRF: %s…)", (self._csrf_token or "none")[:8])
+
+    def _fetch(self, method: str, url: str) -> str:
+        """Run an HTTP request inside the browser via fetch(), returning the response body."""
+        result = self._page.evaluate(
+            """async ({method, url, csrf}) => {
+                const resp = await fetch(url, {
+                    method,
+                    headers: {
+                        'NK': 'NT',
+                        'Accept': 'application/json',
+                        'connect-csrf-token': csrf || '',
+                    },
+                });
+                return {status: resp.status, body: await resp.text()};
+            }""",
+            {"method": method, "url": url, "csrf": self._csrf_token},
+        )
+        if result["status"] >= 400:
+            raise requests.HTTPError(f"HTTP {result['status']} {method} {url}")
+        return result["body"]
+
+    def close(self) -> None:
+        self._context.close()
+        self._pw.stop()
 
     def get_activities_by_date(self, start_date: str, end_date: str) -> list[dict]:
-        resp = self._session.get(
-            f"{self.BASE}/proxy/activitylist-service/activities/search/activities",
-            params={"startDate": start_date, "endDate": end_date, "limit": 100},
-            timeout=15,
+        url = (
+            f"{self.BASE}/gc-api/activitylist-service/activities/search/activities"
+            f"?startDate={start_date}&endDate={end_date}&limit=100"
         )
-        resp.raise_for_status()
-        return resp.json()
+        return json.loads(self._fetch("GET", url))
 
     def download_fit(self, activity_id: int) -> bytes:
-        resp = self._session.get(
-            f"{self.BASE}/download-service/files/activity/{activity_id}",
-            timeout=30,
+        result = self._page.evaluate(
+            """async ({url, csrf}) => {
+                const resp = await fetch(url, {
+                    headers: {'connect-csrf-token': csrf || ''},
+                });
+                if (!resp.ok) return {status: resp.status, data: null};
+                const buf = await resp.arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                let bin = '';
+                for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+                return {status: resp.status, data: btoa(bin)};
+            }""",
+            {
+                "url": f"{self.BASE}/gc-api/download-service/files/activity/{activity_id}",
+                "csrf": self._csrf_token,
+            },
         )
-        resp.raise_for_status()
-        return resp.content
+        if result["status"] >= 400:
+            raise requests.HTTPError(f"HTTP {result['status']} downloading activity {activity_id}")
+        return base64.b64decode(result["data"])
 
     def delete_activity(self, activity_id: int) -> None:
-        resp = self._session.delete(
-            f"{self.BASE}/activity-service/activity/{activity_id}",
-            timeout=15,
-        )
-        resp.raise_for_status()
+        self._fetch("DELETE", f"{self.BASE}/gc-api/activity-service/activity/{activity_id}")
 
     def upload_fit(self, fit_path: Path) -> dict:
-        with open(fit_path, "rb") as f:
-            resp = self._session.post(
-                f"{self.BASE}/upload-service/upload",
-                files={"file": (fit_path.name, f, "application/octet-stream")},
-                timeout=60,
-            )
-        resp.raise_for_status()
-        return resp.json()
+        fit_b64 = base64.b64encode(fit_path.read_bytes()).decode()
+        result = self._page.evaluate(
+            """async ({url, filename, data, csrf}) => {
+                const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+                const blob = new Blob([bytes], {type: 'application/octet-stream'});
+                const form = new FormData();
+                form.append('file', blob, filename);
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: {'connect-csrf-token': csrf || ''},
+                    body: form,
+                });
+                return {status: resp.status, body: await resp.text()};
+            }""",
+            {
+                "url": f"{self.BASE}/gc-api/upload-service/upload",
+                "filename": fit_path.name,
+                "data": fit_b64,
+                "csrf": self._csrf_token,
+            },
+        )
+        if result["status"] >= 400:
+            raise requests.HTTPError(f"HTTP {result['status']} uploading {fit_path.name}")
+        return json.loads(result["body"]) if result["body"] else {}
 
 
 _garmin_session: GarminSession | None = None
@@ -251,7 +303,6 @@ def garmin_session() -> GarminSession:
     global _garmin_session
     if _garmin_session is None:
         _garmin_session = GarminSession(GARMIN_SESSION_FILE)
-        log.info("Loaded Garmin session from %s", GARMIN_SESSION_FILE)
     return _garmin_session
 
 
@@ -478,6 +529,8 @@ def run() -> None:
     state["synced_ids"]     = sorted(synced_ids)
     state["last_run_epoch"] = now_epoch
     save_state(state)
+    if _garmin_session is not None:
+        _garmin_session.close()
     log.info("Done.")
 
 
