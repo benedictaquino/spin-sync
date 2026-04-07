@@ -1,7 +1,7 @@
 # Technical Design: Replace FIT Download with Strava Streams API
 
 **Date:** 2026-04-05
-**Status:** Proposed
+**Status:** Implemented
 
 ## Problem
 
