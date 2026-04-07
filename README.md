@@ -44,7 +44,17 @@ uv run python scripts/strava_auth.py
 A browser window will open. Approve access, then copy the printed refresh
 token into `.env`.
 
-### 4. Test manually
+### 4. Authenticate with Garmin Connect (one-time)
+
+```bash
+uv run python scripts/garmin_auth.py
+```
+
+A Playwright browser window opens. Log in to Garmin Connect normally. The
+script saves session cookies to `~/.spin-sync-garmin-session.json`. Re-run
+this step whenever the session expires (typically weeks to months).
+
+### 5. Test manually
 
 ```bash
 export $(grep -v '^#' .env | xargs)
@@ -65,9 +75,11 @@ uv run python src/sync.py
    | `STRAVA_CLIENT_ID` | From your Strava API app |
    | `STRAVA_CLIENT_SECRET` | From your Strava API app |
    | `STRAVA_REFRESH_TOKEN` | From `strava_auth.py` |
-   | `GARMIN_EMAIL` | Your Garmin Connect email |
-   | `GARMIN_PASSWORD` | Your Garmin Connect password |
    | `GH_PAT` *(optional)* | Personal access token with `secrets:write` scope — allows auto-rotation of the Strava refresh token |
+
+   > **Note:** Garmin Connect uses browser-based session cookies (captured by
+   > `scripts/garmin_auth.py`) rather than username/password credentials.
+   > GitHub Actions automation currently requires manual session management.
 
 3. The workflow at `.github/workflows/spin-sync.yml` runs automatically on a
    schedule timed ~15 min after each class slot (see the workflow file for

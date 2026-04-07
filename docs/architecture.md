@@ -65,25 +65,23 @@ scripts/
 
 The main entry point. Responsible for:
 
-- **Strava polling**: calls `GET /athlete/activities` with `after` set to the last run epoch (stored in state). Filters for `VirtualRide` and `Ride` activity types produced by the ICG app.
+- **Strava polling**: calls `GET /athlete/activities` with `after` set to the last run epoch (stored in state). Filters for `VirtualRide` and `Ride` activity types produced by the ICG app. Power/cadence/distance data is fetched via the official `GET /api/v3/activities/{id}/streams` endpoint (not a FIT file download), which works with standard OAuth Bearer tokens.
 - **Strava duplicate deletion**: finds the Garmin watch's auto-synced activity by looking for a `Ride`, `VirtualRide`, or `workout` activity within `TIME_MATCH_TOLERANCE_S` (default 10 min) of the ICG start time, with zero or missing `average_watts` (the watch duplicate has no power data); activities with nonzero `average_watts` are excluded — this protects the ICG activity and any other power-enabled recording from being deleted.
 - **Garmin activity matching**: queries Garmin Connect for `indoor_cycling`, `cardio`, or `cycling` activities by date (derived as `start_epoch - TIME_MATCH_TOLERANCE_S` in UTC — near-midnight activities may query the previous date), matches by timestamp proximity.
 - **State management**: persists synced Strava activity IDs and the last-run epoch to `~/.spin-sync-state.json` so re-runs are safe and already-processed activities are skipped.
-- **Lazy Garmin login**: the `garmin_client()` singleton logs in once per process and reuses the session.
+- **Lazy Garmin session**: the `garmin_session()` singleton loads the cookie file once per process and reuses the session.
 
 ### `src/merge_fit.py`
 
-Merges the ICG power/cadence data into the Garmin watch `.fit` file. The Garmin file is the authoritative base — its `file_id`, `device_info`, Training Effect fields, lap structure, and event messages are all preserved. Lap and session summary fields are recalculated from the merged records. ICG data is overlaid second-by-second.
+Merges ICG power/cadence data (passed in as a `list[RecordSnapshot]`) into the Garmin watch `.fit` file. The Garmin file is the authoritative base — its `file_id`, `device_info`, Training Effect fields, lap structure, and event messages are all preserved. Lap and session summary fields are recalculated from the merged records. ICG data is overlaid second-by-second.
 
-Two FIT libraries are used deliberately:
-- **`fitparse`** reads the ICG file. It's more tolerant of non-standard vendor FIT files produced by the ICG app.
-- **`fit_tool`** reads and rewrites the Garmin file. It preserves all message types faithfully, which is required to keep the Training Effect and device metadata intact.
+The file is parsed and rewritten using a custom binary FIT parser (reading raw bytes directly). `fit_tool` is used only for its CRC-16 utility. This approach preserves all message types byte-for-byte, which is required to keep Training Effect and device metadata intact.
 
 The merge algorithm:
-1. Parse all ICG `record` messages into `RecordSnapshot` objects (timestamp, power, cadence, distance), sorted by time.
-2. Walk each message in the Garmin file. For `RecordMessage` entries, binary-search the ICG snapshot list for the nearest timestamp within 5 seconds (`MAX_INTERPOLATION_GAP_S`). If found, inject ICG power, cadence, and distance (only non-`None` values are written; if an ICG field is absent, the original Garmin value is preserved).
-3. After processing all records, recalculate `LapMessage` and `SessionMessage` summary fields: `avg_power`, `max_power`, `normalized_power` (30-second rolling average NP calculation), `avg_cadence`, `max_cadence`, `total_distance`. Note: for multi-lap activities, all merged records are used for every lap's summary (not scoped to each lap's time window) — per-lap accuracy is a known future improvement.
-4. Write the rebuilt file using `FitFileBuilder`.
+1. Accept a pre-parsed `list[RecordSnapshot]` from the caller (populated from Strava Streams in `sync.py`).
+2. Walk each message in the Garmin file binary. For record messages, binary-search the ICG snapshot list for the nearest timestamp within 5 seconds (`MAX_INTERPOLATION_GAP_S`). If found, inject ICG power, cadence, and distance. Fields already present in the Garmin record are overwritten in place; fields not in the definition are appended (with the definition extended accordingly).
+3. For Lap and Session messages, patch the `total_distance` field directly in the binary output.
+4. Rebuild the FIT file with an updated header size and recalculated CRC.
 
 ### GitHub Actions workflow
 
@@ -96,7 +94,7 @@ If the Strava refresh token rotates during a run, the new token is written to `.
 | Variable | Purpose |
 |---|---|
 | `STRAVA_CLIENT_ID/SECRET/REFRESH_TOKEN` | Strava API credentials |
-| `GARMIN_EMAIL/PASSWORD` | Garmin Connect login |
+| `GARMIN_SESSION_FILE` | Path to Garmin Connect session cookies (default `~/.spin-sync-garmin-session.json`) — populated by `scripts/garmin_auth.py` |
 | `LOOKBACK_SECONDS` | How far back to look on first run (default 6h; GitHub Actions uses 2h) |
 | `TIME_MATCH_TOLERANCE_S` | Max gap between ICG and watch start times (default 600s) |
 | `STATE_FILE` | Path to state JSON (default `~/.spin-sync-state.json`) |

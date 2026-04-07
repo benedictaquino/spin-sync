@@ -8,7 +8,7 @@ spin-sync auto-syncs ICG IC7 spin bike workouts from Strava to Garmin Connect. T
 
 **Flow per workout:**
 1. Poll Strava for new `VirtualRide`/`Ride` activities (ICG source)
-2. Download the original ICG `.fit` from Strava
+2. Fetch ICG power/cadence/distance data via Strava Streams API
 3. Find and delete the empty Garmin watch duplicate on Strava
 4. Find the matching watch activity in Garmin Connect and download its `.fit`
 5. Merge ICG power/cadence into the Garmin watch `.fit` (preserving HR, Training Effect metadata)
@@ -45,9 +45,7 @@ Two source files in `src/`:
 
 **`src/sync.py`** — orchestration layer. Handles all API calls (Strava REST, Garmin Connect via `GarminSession`), state management, and the 8-step sync flow. State is persisted to `~/.spin-sync-state.json` (configurable via `STATE_FILE` env var). Activity matching uses `TIME_MATCH_TOLERANCE_S` (default 10 min) to correlate ICG and watch activities by timestamp.
 
-**`src/merge_fit.py`** — FIT file merging. Uses two different libraries:
-- `fitparse` for reading ICG FIT files (handles non-standard vendor files)
-- `fit_tool` for reading/writing the Garmin FIT file (preserves all message types including device metadata that drives Training Effect)
+**`src/merge_fit.py`** — FIT file merging. Accepts a pre-parsed `list[RecordSnapshot]` (from Strava Streams) rather than a FIT file path. Uses a custom binary FIT parser to read and rewrite the Garmin file byte-for-byte, preserving all message types including device metadata and Training Effect fields. `fit_tool` is used only for its CRC-16 utility.
 
 The merge does a nearest-neighbor lookup (binary search, max 5s gap) to inject ICG power/cadence/distance into each Garmin record message. Lap and session summaries are recalculated from merged records, including Normalized Power (30-second rolling average).
 
@@ -74,7 +72,7 @@ The merge does a nearest-neighbor lookup (binary search, max 5s gap) to inject I
 ## Dependencies
 
 - `playwright` — browser automation for Garmin Connect authentication (bypasses Cloudflare)
-- `fit-tool` — FIT file read/write (preserves all message types)
-- `python-fitparse` — FIT file reading (better vendor file compatibility)
+- `fit-tool` — CRC-16 utility used in FIT file reconstruction
+- `python-fitparse` — FIT file reading (present for compatibility; ICG data now comes from Strava Streams, not FIT files)
 - `requests` — Strava REST API calls and Garmin Connect API calls
 - `python-dotenv` — loads `.env` file during the one-time Strava auth setup
