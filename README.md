@@ -25,9 +25,7 @@ See [docs/architecture.md](docs/architecture.md) for a full breakdown.
 ```bash
 git clone https://github.com/YOUR_USERNAME/spin-sync.git
 cd spin-sync
-python3 -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+uv sync
 ```
 
 ### 2. Configure credentials
@@ -40,7 +38,7 @@ cp .env.example .env
 ### 3. Get your Strava refresh token (one-time)
 
 ```bash
-python scripts/strava_auth.py
+uv run python scripts/strava_auth.py
 ```
 
 A browser window will open. Approve access, then copy the printed refresh
@@ -50,7 +48,7 @@ token into `.env`.
 
 ```bash
 export $(grep -v '^#' .env | xargs)
-python src/sync.py
+uv run python src/sync.py
 ```
 
 ---
