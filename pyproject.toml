@@ -18,14 +18,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-  "pytest>=8.0.0",
+  "pytest>=9.0.3",
 ]
 
-[tool.pytest.ini_options]
+[tool.pytest.init_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-
-[dependency-groups]
-dev = [
-  "pytest>=8.0.0",
-]
