@@ -505,7 +505,6 @@ def run() -> None:
             # 5. Merge ICG power/cadence into Garmin watch file
             try:
                 merge(garmin_fit, icg_records, merged_fit)
-                merge(garmin_fit, icg_records, merged_fit)
             except Exception as exc:
                 log.error("Merge failed for '%s': %s", activity_name, exc)
                 continue
