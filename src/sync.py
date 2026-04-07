@@ -3,7 +3,7 @@ spin-sync: Auto-sync ICG IC7 spin workouts from Strava to Garmin Connect.
 
 Flow:
   1. Poll Strava for recent VirtualRide / indoor cycling activities from ICG.
-  2. Download the original ICG .fit file from Strava.
+  2. Fetch ICG power/cadence/distance streams from the Strava API.
   3. Find the matching Indoor Cycling activity the Garmin watch auto-synced to
      Strava (same day, overlapping time window) and delete it — it's empty
      (no power/cadence) and we don't want the duplicate.
@@ -32,7 +32,7 @@ from pathlib import Path
 import requests
 from garminconnect import Garmin
 
-from merge_fit import merge
+from merge_fit import merge, RecordSnapshot
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -41,6 +41,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,
 )
 log = logging.getLogger("spin-sync")
 
@@ -112,31 +113,44 @@ def strava_activity_start_epoch(activity: dict) -> int:
     return int(dt.timestamp())
 
 
-def strava_download_fit(activity_id: int, access_token: str, dest: Path) -> bool:
-    """Download the original .fit for a Strava activity. Returns True on success."""
+def strava_fetch_icg_streams(
+    activity_id: int, access_token: str, start_epoch: int,
+) -> list[RecordSnapshot] | None:
+    """Fetch power/cadence/distance/time streams from Strava API.
+    Returns list of RecordSnapshot, or None on failure."""
     resp = requests.get(
-        f"https://www.strava.com/activities/{activity_id}/export_original",
+        f"https://www.strava.com/api/v3/activities/{activity_id}/streams",
         headers={"Authorization": f"Bearer {access_token}"},
-        allow_redirects=True,
+        params={"keys": "watts,cadence,time,distance", "key_by_type": "true"},
         timeout=30,
     )
     if resp.status_code == 404:
-        log.warning("No original .fit for Strava activity %s.", activity_id)
-        return False
+        log.warning("No streams for Strava activity %s.", activity_id)
+        return None
     resp.raise_for_status()
+    data = resp.json()
 
-    content_type = resp.headers.get("Content-Type", "")
-    if "application/zip" in content_type or resp.content[:2] == b"PK":
-        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-            fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
-            if not fit_names:
-                return False
-            dest.write_bytes(zf.read(fit_names[0]))
-    else:
-        dest.write_bytes(resp.content)
+    time_data = data.get("time", {}).get("data", [])
+    watts     = data.get("watts", {}).get("data", [])
+    cadence   = data.get("cadence", {}).get("data", [])
+    distance  = data.get("distance", {}).get("data", [])
 
-    log.info("Downloaded ICG .fit (%d bytes) → %s", dest.stat().st_size, dest.name)
-    return True
+    if not time_data:
+        log.warning("Strava streams for %s have no time data.", activity_id)
+        return None
+
+    start_ms = start_epoch * 1000
+    records = []
+    for i, t in enumerate(time_data):
+        records.append(RecordSnapshot(
+            timestamp_ms=start_ms + int(t * 1000),
+            power=watts[i]    if i < len(watts)    else None,
+            cadence=cadence[i] if i < len(cadence) else None,
+            distance=distance[i] if i < len(distance) else None,
+        ))
+
+    log.info("Fetched %d stream samples for Strava activity %s.", len(records), activity_id)
+    return records
 
 
 def strava_find_watch_duplicate(
@@ -357,13 +371,13 @@ def run() -> None:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp        = Path(tmpdir)
-            icg_fit    = tmp / "icg.fit"
             garmin_fit = tmp / "garmin_watch.fit"
             merged_fit = tmp / "merged.fit"
 
-            # 1. Download ICG .fit from Strava
-            if not strava_download_fit(strava_id, access_token, icg_fit):
-                log.warning("Skipping %s — no .fit on Strava.", strava_id)
+            # 1. Fetch ICG power/cadence streams from Strava
+            icg_records = strava_fetch_icg_streams(strava_id, access_token, start_epoch)
+            if icg_records is None:
+                log.warning("Skipping %s — no streams on Strava.", strava_id)
                 synced_ids.add(strava_id)
                 continue
 
@@ -400,7 +414,7 @@ def run() -> None:
 
             # 5. Merge ICG power/cadence into Garmin watch file
             try:
-                merge(garmin_fit, icg_fit, merged_fit)
+                merge(garmin_fit, icg_records, merged_fit)
             except Exception as exc:
                 log.error("Merge failed for '%s': %s", activity_name, exc)
                 continue

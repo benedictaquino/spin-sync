@@ -22,7 +22,6 @@ Dependencies: fitparse (pip install python-fitparse), fit-tool
 from __future__ import annotations
 
 import logging
-import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,7 +47,7 @@ MAX_INTERPOLATION_GAP_S = 5
 @dataclass
 class RecordSnapshot:
     """Lightweight snapshot of a single FIT record message."""
-    timestamp_ms: int        # milliseconds since FIT epoch
+    timestamp_ms: int        # Unix milliseconds (ms since 1970-01-01 UTC)
     power:        Optional[int]   = None  # watts
     cadence:      Optional[int]   = None  # rpm
     distance:     Optional[float] = None  # metres
@@ -168,17 +167,55 @@ def _calc_np(power_series: list[int], window: int = 30) -> int:
     return int(mean_fourth ** 0.25)
 
 
-def merge(garmin_path: Path, icg_path: Path, output_path: Path) -> None:
+# All RecordMessage property names, used for field copying.
+_RECORD_PROPERTIES = (
+    "timestamp", "position_lat", "position_long", "altitude", "heart_rate",
+    "cadence", "distance", "speed", "power", "grade", "resistance",
+    "time_from_course", "cycle_length", "temperature", "speed_1s", "cycles",
+    "total_cycles", "compressed_accumulated_power", "accumulated_power",
+    "left_right_balance", "gps_accuracy", "vertical_speed", "calories",
+    "vertical_oscillation", "stance_time_percent", "stance_time", "activity_type",
+    "left_torque_effectiveness", "right_torque_effectiveness",
+    "left_pedal_smoothness", "right_pedal_smoothness", "combined_pedal_smoothness",
+    "time128", "stroke_type", "zone", "ball_speed", "cadence256",
+    "fractional_cadence", "total_hemoglobin_conc", "total_hemoglobin_conc_min",
+    "total_hemoglobin_conc_max", "saturated_hemoglobin_percent",
+    "saturated_hemoglobin_percent_min", "saturated_hemoglobin_percent_max",
+    "device_index", "enhanced_speed", "enhanced_altitude",
+)
+
+
+def _clone_record_with_icg(orig: RecordMessage, icg: RecordSnapshot) -> RecordMessage:
+    """
+    Return a new RecordMessage (all fields growable) with values copied from orig,
+    then ICG power/cadence/distance injected.  Required because Garmin watch records
+    are parsed with a fixed definition that marks power/cadence as non-growable size-0
+    fields — you cannot set a value on them directly.
+    """
+    new_msg = RecordMessage()
+    for attr in _RECORD_PROPERTIES:
+        try:
+            val = getattr(orig, attr)
+            if val is not None:
+                setattr(new_msg, attr, val)
+        except Exception:
+            pass
+    if icg.power    is not None: new_msg.power    = icg.power
+    if icg.cadence  is not None: new_msg.cadence  = icg.cadence
+    if icg.distance is not None: new_msg.distance = icg.distance
+    return new_msg
+
+
+def merge(garmin_path: Path, icg_records: list[RecordSnapshot], output_path: Path) -> None:
     """
     Merge ICG power/cadence data into the Garmin watch FIT file.
 
     garmin_path : .fit exported from the Garmin watch (Indoor Cycling activity)
-    icg_path    : .fit downloaded from Strava (originally from ICG IC7 via ICG app)
+    icg_records : pre-parsed list of RecordSnapshot (from Strava Streams or FIT file)
     output_path : destination for the merged .fit file
     """
-    icg_records = _parse_icg_records(icg_path)
     if not icg_records:
-        log.warning("ICG file contained no record messages — output will be a copy of Garmin file.")
+        log.warning("No ICG records provided — output will be a copy of Garmin file.")
         output_path.write_bytes(garmin_path.read_bytes())
         return
 
@@ -202,14 +239,15 @@ def merge(garmin_path: Path, icg_path: Path, output_path: Path) -> None:
         msg = fit_record.message
 
         if isinstance(msg, RecordMessage):
-            # Convert FIT timestamp (ms since FIT epoch) to Unix ms
-            ts_ms = (msg.timestamp or 0) + _FIT_EPOCH_OFFSET_MS
+            # fit_tool already returns Unix ms — no epoch conversion needed
+            ts_ms = msg.timestamp or 0
 
             icg = _nearest_icg(icg_records, ts_ms)
             if icg is not None:
-                if icg.power    is not None: msg.power    = icg.power
-                if icg.cadence  is not None: msg.cadence  = icg.cadence
-                if icg.distance is not None: msg.distance = icg.distance
+                # Garmin watch records are parsed with a fixed definition that
+                # marks power/cadence/distance as non-growable.  We must clone
+                # into a fresh RecordMessage (all fields growable) before setting.
+                msg = _clone_record_with_icg(msg, icg)
                 injected += 1
 
             # Track merged values for summary recalculation
@@ -239,7 +277,7 @@ def merge(garmin_path: Path, icg_path: Path, output_path: Path) -> None:
                 except AttributeError:
                     pass
 
-        builder.add(fit_record)
+        builder.add(msg)
 
     builder.build().to_file(str(output_path))
 
