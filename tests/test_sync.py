@@ -122,8 +122,6 @@ class TestCandidateFilteringICG:
     @patch("sync.merge")
     @patch("sync.garmin_download_fit")
     @patch("sync.garmin_find_matching_activity")
-    @patch("sync.strava_delete_activity")
-    @patch("sync.strava_find_watch_duplicate")
     @patch("sync.strava_fetch_icg_streams")
     @patch("sync.save_state")
     @patch("sync.load_state")
@@ -136,8 +134,6 @@ class TestCandidateFilteringICG:
         mock_load,
         mock_save,
         mock_streams,
-        mock_find_dup,
-        mock_delete_strava,
         mock_garmin_find,
         mock_garmin_dl,
         mock_merge,
@@ -159,7 +155,6 @@ class TestCandidateFilteringICG:
                 timestamp_ms=1705312800000, power=150, cadence=80, distance=100
             )
         ]
-        mock_find_dup.return_value = None  # No Strava watch duplicate
         mock_garmin_find.return_value = {
             "activityId": 9999,
             "activityName": "Indoor Cycling",

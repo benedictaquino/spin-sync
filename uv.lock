@@ -324,15 +324,6 @@ wheels = [
 ]
 
 [[package]]
-name = "python-fitparse"
-version = "2.1.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2c/71/4a6fb4b0a06c178408d972100e14204741c47e76499518fa18294d7057cf/python_fitparse-2.1.3.tar.gz", hash = "sha256:b18c85508adadc9a42228c32f314669b693cf184bad5efcfb8e6ab231cdde6ad", size = 97247, upload-time = "2026-02-27T21:52:23.484Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/26/90/584a739dd3579eda534b3a407c263e887133ed50c05eb738e4df7d8a6ae0/python_fitparse-2.1.3-py3-none-any.whl", hash = "sha256:2055d6b5bde602f5be5341f18792ef244abfcea82a698b37b39b74f48cbac2c3", size = 92450, upload-time = "2026-02-27T21:52:21.755Z" },
-]
-
-[[package]]
 name = "requests"
 version = "2.33.1"
 source = { registry = "https://pypi.org/simple" }
@@ -355,7 +346,6 @@ dependencies = [
     { name = "fit-tool" },
     { name = "playwright" },
     { name = "python-dotenv" },
-    { name = "python-fitparse" },
     { name = "requests" },
 ]
 
@@ -369,7 +359,6 @@ requires-dist = [
     { name = "fit-tool", specifier = ">=0.9.15" },
     { name = "playwright", specifier = ">=1.40.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "python-fitparse", specifier = ">=1.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
 ]
 
