@@ -115,9 +115,15 @@ def strava_activity_start_epoch(activity: dict) -> int:
 
 def strava_fetch_icg_streams(
     activity_id: int, access_token: str, start_epoch: int,
+    total_distance_m: float = 0,
 ) -> list[RecordSnapshot] | None:
     """Fetch power/cadence/distance/time streams from Strava API.
-    Returns list of RecordSnapshot, or None on failure."""
+    Returns list of RecordSnapshot, or None on failure.
+
+    total_distance_m: total activity distance in metres (from the activity
+    object).  Used as a fallback when Strava does not return a distance stream
+    — cumulative distance is then linearly interpolated from elapsed time.
+    """
     resp = requests.get(
         f"https://www.strava.com/api/v3/activities/{activity_id}/streams",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -138,6 +144,15 @@ def strava_fetch_icg_streams(
     if not time_data:
         log.warning("Strava streams for %s have no time data.", activity_id)
         return None
+
+    # Fall back to linear interpolation when the distance stream is absent.
+    if not distance and total_distance_m > 0:
+        total_time = time_data[-1] or 1
+        distance = [total_distance_m * t / total_time for t in time_data]
+        log.info(
+            "No distance stream for %s; interpolated from total distance %.0f m.",
+            activity_id, total_distance_m,
+        )
 
     start_ms = start_epoch * 1000
     records = []
@@ -374,8 +389,11 @@ def run() -> None:
             garmin_fit = tmp / "garmin_watch.fit"
             merged_fit = tmp / "merged.fit"
 
-            # 1. Fetch ICG power/cadence streams from Strava
-            icg_records = strava_fetch_icg_streams(strava_id, access_token, start_epoch)
+            # 1. Fetch ICG power/cadence/distance streams from Strava
+            icg_records = strava_fetch_icg_streams(
+                strava_id, access_token, start_epoch,
+                total_distance_m=icg_activity.get("distance", 0),
+            )
             if icg_records is None:
                 log.warning("Skipping %s — no streams on Strava.", strava_id)
                 synced_ids.add(strava_id)
