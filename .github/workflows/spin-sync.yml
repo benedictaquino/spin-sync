@@ -16,23 +16,23 @@ on:
   # the state file prevents double-uploads.
   schedule:
     # Monday — 08:00 class ends; fire at 08:15 ET
-    - cron: "15 12 * * 1"   # EDT (summer)
-    - cron: "15 13 * * 1"   # EST (winter)
-    # Tuesday — 12:45 class ends; fire at 13:00 ET
-    - cron: "0 17 * * 2"    # EDT
-    - cron: "0 18 * * 2"    # EST
-    # Wednesday — 08:15 class ends; fire at 08:30 ET
-    - cron: "30 12 * * 3"   # EDT
-    - cron: "30 13 * * 3"   # EST
-    # Saturday — 11:00 class ends; fire at 11:15 ET
-    - cron: "15 15 * * 6"   # EDT
-    - cron: "15 16 * * 6"   # EST
-    # Sunday — 10:30 regular class ends; fire at 10:45 ET
-    - cron: "45 14 * * 0"   # EDT
-    - cron: "45 15 * * 0"   # EST
-    # Sunday — 90-min class catch-up; fire at 11:30 ET
-    - cron: "30 15 * * 0"   # EDT
-    - cron: "30 16 * * 0"   # EST
+    # - cron: "15 12 * * 1"   # EDT (summer)
+    # - cron: "15 13 * * 1"   # EST (winter)
+    # # Tuesday — 12:45 class ends; fire at 13:00 ET
+    # - cron: "0 17 * * 2"    # EDT
+    # - cron: "0 18 * * 2"    # EST
+    # # Wednesday — 08:15 class ends; fire at 08:30 ET
+    # - cron: "30 12 * * 3"   # EDT
+    # - cron: "30 13 * * 3"   # EST
+    # # Saturday — 11:00 class ends; fire at 11:15 ET
+    # - cron: "15 15 * * 6"   # EDT
+    # - cron: "15 16 * * 6"   # EST
+    # # Sunday — 10:30 regular class ends; fire at 10:45 ET
+    # - cron: "45 14 * * 0"   # EDT
+    # - cron: "45 15 * * 0"   # EST
+    # # Sunday — 90-min class catch-up; fire at 11:30 ET
+    # - cron: "30 15 * * 0"   # EDT
+    # - cron: "30 16 * * 0"   # EST
 
   # Allow manual trigger from the Actions tab
   workflow_dispatch:
