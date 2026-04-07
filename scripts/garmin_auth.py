@@ -25,6 +25,9 @@ SESSION_FILE = Path(
     os.environ.get("GARMIN_SESSION_FILE", Path.home() / ".spin-sync-garmin-session.json")
 )
 
+# Persistent profile dir so Chromium looks like a real returning browser
+BROWSER_PROFILE_DIR = Path.home() / ".spin-sync-chromium-profile"
+
 GARMIN_SIGNIN = "https://connect.garmin.com/signin"
 
 # URL patterns that indicate a successful login (post-auth redirect destinations)
@@ -39,10 +42,17 @@ async def main() -> None:
     print("Launching browser for Garmin Connect login …")
     print(f"Session will be saved to: {SESSION_FILE}\n")
 
+    BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        context = await browser.new_context()
-        page = await context.new_page()
+        # Persistent context: gives Chromium a real profile (history, storage,
+        # fingerprint entropy) so Garmin/Cloudflare don't flag it as a bot.
+        context = await p.chromium.launch_persistent_context(
+            str(BROWSER_PROFILE_DIR),
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = context.pages[0] if context.pages else await context.new_page()
 
         await page.goto(GARMIN_SIGNIN)
 
@@ -57,14 +67,15 @@ async def main() -> None:
             )
         except Exception:
             print("ERROR: Timed out waiting for login (3 min). Please try again.")
-            await browser.close()
+            await context.close()
             return
 
         # Wait a moment for background API calls / cookie finalisation
         await page.wait_for_timeout(2_000)
 
         cookies = await context.cookies()
-        await browser.close()
+        user_agent = await page.evaluate("navigator.userAgent")
+        await context.close()
 
     garmin_cookies = [
         c for c in cookies
@@ -76,7 +87,7 @@ async def main() -> None:
         return
 
     SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SESSION_FILE.write_text(json.dumps({"cookies": garmin_cookies}, indent=2))
+    SESSION_FILE.write_text(json.dumps({"cookies": garmin_cookies, "user_agent": user_agent}, indent=2))
     SESSION_FILE.chmod(0o600)  # Restrict read access — cookies are sensitive
 
     print(f"Saved {len(garmin_cookies)} Garmin cookies to {SESSION_FILE}")

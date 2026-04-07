@@ -261,21 +261,27 @@ class GarminSession:
         self._session.headers.update({
             "NK": "NT",
             "X-app-ver": "4.82.0.0",
+            "Accept": "application/json",
         })
         self._load_cookies(session_file)
 
     def _load_cookies(self, session_file: Path) -> None:
         data = json.loads(session_file.read_text())
-        for cookie in data["cookies"]:
-            self._session.cookies.set(
-                cookie["name"],
-                cookie["value"],
-                domain=cookie.get("domain", ".garmin.com"),
-            )
+        # Set cookies as a header to bypass requests' domain-matching logic,
+        # which silently drops cookies whose domain doesn't exactly match the
+        # jar's expectations (e.g. JWT_WEB on .connect.garmin.com).
+        cookie_header = "; ".join(
+            f"{c['name']}={c['value']}" for c in data["cookies"]
+        )
+        self._session.headers["Cookie"] = cookie_header
+        # cf_clearance is bound to the IP + User Agent that solved the
+        # Cloudflare challenge. Use the exact UA from the Playwright session.
+        if ua := data.get("user_agent"):
+            self._session.headers["User-Agent"] = ua
 
     def get_activities_by_date(self, start_date: str, end_date: str) -> list[dict]:
         resp = self._session.get(
-            f"{self.BASE}/activitylist-service/activities/search/activities",
+            f"{self.BASE}/proxy/activitylist-service/activities/search/activities",
             params={"startDate": start_date, "endDate": end_date, "limit": 100},
             timeout=15,
         )
