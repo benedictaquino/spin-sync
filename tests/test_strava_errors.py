@@ -1,6 +1,4 @@
 """
-Unit tests for PR #15: actionable error message for Strava 401 on activity delete.
-
 Tests cover:
 - 401 response -> returns False AND logs ERROR containing "strava_auth.py" and
   "STRAVA_REFRESH_TOKEN"
