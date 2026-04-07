@@ -232,6 +232,13 @@ def strava_delete_activity(activity_id: int, access_token: str) -> bool:
     if resp.status_code == 404:
         log.info("Strava activity %s already gone.", activity_id)
         return True
+    if resp.status_code == 401:
+        log.error(
+            "Strava returned 401 deleting activity %s — access token is expired or "
+            "invalid. Re-run scripts/strava_auth.py and update STRAVA_REFRESH_TOKEN.",
+            activity_id,
+        )
+        return False
     log.warning(
         "Could not delete Strava activity %s: HTTP %s %s",
         activity_id, resp.status_code, resp.text[:200],
@@ -514,7 +521,13 @@ def run() -> None:
                 access_token, icg_activity, all_activities
             )
             if strava_duplicate:
-                strava_delete_activity(strava_duplicate["id"], access_token)
+                deleted = strava_delete_activity(strava_duplicate["id"], access_token)
+                if not deleted:
+                    log.warning(
+                        "Strava watch duplicate for '%s' was NOT deleted and will "
+                        "remain until auth is fixed.",
+                        activity_name,
+                    )
             else:
                 log.info(
                     "No Strava watch duplicate found for '%s' — either it hasn't "
