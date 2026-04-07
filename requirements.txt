@@ -1,4 +1,4 @@
-garminconnect>=0.2.38
+playwright>=1.40.0
 fit-tool>=0.9.15
 python-fitparse>=1.0.0
 requests>=2.31.0
