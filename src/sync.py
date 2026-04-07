@@ -11,7 +11,8 @@ Flow:
   7. Record the Strava activity ID in state to avoid re-processing.
 
 Result:
-  - Strava : one activity (the original ICG recording with all power/cadence data)
+  - Strava : original ICG recording kept as-is (Strava API does not support deletion,
+             so the Garmin watch auto-sync remains there too)
   - Garmin : one activity (merged file — watch HR/Training Effect + ICG power/cadence)
 """
 
@@ -160,8 +161,6 @@ def strava_fetch_icg_streams(
             distance=distance[i] if i < len(distance) else None,
         ))
 
-    log.info("Fetched %d stream samples for Strava activity %s.", len(records), activity_id)
-    return records
     log.info("Fetched %d stream samples for Strava activity %s.", len(records), activity_id)
     return records
 

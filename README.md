@@ -7,14 +7,14 @@ calculates Training Effect and training load — no manual steps per workout.
 ## How it works
 
 The sync runs on a schedule (~15 min after each class). It polls Strava for new ICG
-activities, downloads the `.fit` file, finds the matching watch activity in Garmin Connect,
-**merges** ICG power/cadence data into the Garmin watch file (preserving Training Effect
-computed on-device), deletes duplicates from both platforms, and uploads the merged file
-to Garmin Connect.
+activities, fetches power/cadence/distance data via the Strava Streams API, finds the
+matching watch activity in Garmin Connect, **merges** ICG power/cadence into the Garmin
+watch file (preserving Training Effect computed on-device), deletes the empty watch
+activity from Garmin Connect, and uploads the merged file.
 
-Result: one activity in Strava (original ICG recording) and one in Garmin Connect
-(merged file with watch Training Effect + bike power/cadence). Zero manual steps per
-workout.
+Result: Strava keeps both the original ICG recording and the watch auto-sync (the
+Strava API does not support deletion). Garmin Connect ends up with one merged activity
+(watch Training Effect + bike power/cadence). Zero manual steps per workout.
 
 See [docs/architecture.md](docs/architecture.md) for a full breakdown.
 
@@ -114,12 +114,6 @@ See `.env.example` for all options.  The most important ones:
 | *(activity types)* | Which Strava activity types trigger a sync. Hardcoded in `src/sync.py` (`VirtualRide`, `Ride`); edit that file to change. |
 
 ## Troubleshooting
-
-**"No original file available"** — Strava only stores original .fit files for
-activities that were uploaded as files.  If the ICG app syncs via the Strava
-API (rather than a file upload), there may be no downloadable .fit.  In that
-case you'll need to manually export from the ICG app and upload to Strava as
-a file first.
 
 **Training Effect not calculating** — The merge uses the Garmin watch file as
 the base, which preserves Training Effect fields computed on-device. If

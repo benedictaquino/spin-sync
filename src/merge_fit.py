@@ -16,7 +16,7 @@ Strategy:
   - Records outside the ICG window get FIT invalid-value placeholders so the
     merged file has a single consistent RecordMessage definition throughout.
 
-Dependencies: fitparse (reading ICG .fit files), fit-tool (CRC utility only)
+Dependencies: fit-tool (CRC utility only)
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import fitparse
 from fit_tool.utils.crc import crc16 as _fit_crc16
 
 log = logging.getLogger("spin-sync.merge")
@@ -72,49 +71,6 @@ class RecordSnapshot:
     power:        Optional[int]   = None  # watts
     cadence:      Optional[int]   = None  # rpm
     distance:     Optional[float] = None  # metres
-
-
-# ---------------------------------------------------------------------------
-# ICG FIT-file parser (used when the source is a downloaded .fit, not Strava)
-# ---------------------------------------------------------------------------
-
-def _fit_epoch_offset_ms() -> int:
-    fit_epoch  = datetime(1989, 12, 31, 0, 0, 0, tzinfo=timezone.utc)
-    unix_epoch = datetime(1970,  1,  1, 0, 0, 0, tzinfo=timezone.utc)
-    return int((fit_epoch - unix_epoch).total_seconds() * 1000)
-
-
-_FIT_EPOCH_OFFSET_MS = _fit_epoch_offset_ms()
-
-
-def _to_unix_ms(fit_timestamp_s: float) -> int:
-    return int(fit_timestamp_s * 1000) + _FIT_EPOCH_OFFSET_MS
-
-
-def _parse_icg_records(icg_path: Path) -> list[RecordSnapshot]:
-    """
-    Parse an ICG FIT file and return RecordSnapshots sorted by time.
-    Uses fitparse for broad vendor-FIT compatibility.
-    """
-    snapshots: list[RecordSnapshot] = []
-    fitfile = fitparse.FitFile(str(icg_path), check_crc=False)
-
-    for msg in fitfile.get_messages("record"):
-        fields = {d.name: d.value for d in msg if d.value is not None}
-        ts = fields.get("timestamp")
-        if ts is None:
-            continue
-        ts_ms = int(ts.timestamp() * 1000) if isinstance(ts, datetime) else _to_unix_ms(float(ts))
-        snapshots.append(RecordSnapshot(
-            timestamp_ms=ts_ms,
-            power=fields.get("power"),
-            cadence=fields.get("cadence") or fields.get("cadence_256"),
-            distance=fields.get("distance"),
-        ))
-
-    snapshots.sort(key=lambda r: r.timestamp_ms)
-    log.info("Parsed %d records from ICG file (%s)", len(snapshots), icg_path.name)
-    return snapshots
 
 
 # ---------------------------------------------------------------------------
@@ -184,56 +140,15 @@ def _calc_np(power_series: list[int], window: int = 30) -> int:
     return int(mean_fourth ** 0.25)
 
 
-# All RecordMessage property names, used for field copying.
-_RECORD_PROPERTIES = (
-    "timestamp", "position_lat", "position_long", "altitude", "heart_rate",
-    "cadence", "distance", "speed", "power", "grade", "resistance",
-    "time_from_course", "cycle_length", "temperature", "speed_1s", "cycles",
-    "total_cycles", "compressed_accumulated_power", "accumulated_power",
-    "left_right_balance", "gps_accuracy", "vertical_speed", "calories",
-    "vertical_oscillation", "stance_time_percent", "stance_time", "activity_type",
-    "left_torque_effectiveness", "right_torque_effectiveness",
-    "left_pedal_smoothness", "right_pedal_smoothness", "combined_pedal_smoothness",
-    "time128", "stroke_type", "zone", "ball_speed", "cadence256",
-    "fractional_cadence", "total_hemoglobin_conc", "total_hemoglobin_conc_min",
-    "total_hemoglobin_conc_max", "saturated_hemoglobin_percent",
-    "saturated_hemoglobin_percent_min", "saturated_hemoglobin_percent_max",
-    "device_index", "enhanced_speed", "enhanced_altitude",
-)
-
-
-def _clone_record_with_icg(orig: RecordMessage, icg: RecordSnapshot) -> RecordMessage:
-    """
-    Return a new RecordMessage (all fields growable) with values copied from orig,
-    then ICG power/cadence/distance injected.  Required because Garmin watch records
-    are parsed with a fixed definition that marks power/cadence as non-growable size-0
-    fields — you cannot set a value on them directly.
-    """
-    new_msg = RecordMessage()
-    for attr in _RECORD_PROPERTIES:
-        try:
-            val = getattr(orig, attr)
-            if val is not None:
-                setattr(new_msg, attr, val)
-        except Exception:
-            pass
-    if icg.power    is not None: new_msg.power    = icg.power
-    if icg.cadence  is not None: new_msg.cadence  = icg.cadence
-    if icg.distance is not None: new_msg.distance = icg.distance
-    return new_msg
-
-
 def merge(garmin_path: Path, icg_records: list[RecordSnapshot], output_path: Path) -> None:
     """
     Merge ICG power/cadence data into the Garmin watch FIT file.
 
     garmin_path : .fit exported from the Garmin watch (Indoor Cycling activity)
-    icg_records : pre-parsed list of RecordSnapshot (from Strava Streams or FIT file)
-    icg_records : pre-parsed list of RecordSnapshot (from Strava Streams or FIT)
+    icg_records : pre-parsed list of RecordSnapshot (from Strava Streams)
     output_path : destination for the merged .fit file
     """
     if not icg_records:
-        log.warning("No ICG records provided — output will be a copy of Garmin file.")
         log.warning("No ICG records provided — output will be a copy of Garmin file.")
         output_path.write_bytes(garmin_path.read_bytes())
         return
