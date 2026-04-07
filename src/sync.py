@@ -63,8 +63,6 @@ TARGET_ACTIVITY_TYPES = {"VirtualRide", "Ride"}
 # Strava / Garmin activity types that indicate a plain watch recording
 # (the empty duplicate we want to remove)
 WATCH_ACTIVITY_TYPES_STRAVA = {"Ride", "VirtualRide", "workout"}
-# Includes "fitness_equipment" and "other" to cover the Garmin watch's reported
-# activity type when recording a spin class without a specific sport profile.
 GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio", "cycling", "fitness_equipment", "other"}
 
 # How far back to look on the very first run (seconds)
@@ -385,9 +383,18 @@ def garmin_find_matching_activity(start_epoch: int) -> dict | None:
             )
             return act
 
+    unmatched_types = {
+        (act.get("activityType", {}).get("typeKey") or "").lower()
+        for act in activities
+        if (act.get("activityType", {}).get("typeKey") or "").lower()
+        not in GARMIN_INDOOR_ACTIVITY_TYPES
+    }
     log.warning(
-        "No matching Garmin indoor activity found within %ds of ICG start.",
+        "No matching Garmin indoor activity found within %ds of ICG start. "
+        "Unrecognized types seen: %s — expected one of: %s",
         TIME_MATCH_TOLERANCE_S,
+        sorted(unmatched_types) if unmatched_types else "(none)",
+        sorted(GARMIN_INDOOR_ACTIVITY_TYPES),
     )
     return None
 
