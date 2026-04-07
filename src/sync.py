@@ -383,15 +383,17 @@ def garmin_find_matching_activity(start_epoch: int) -> dict | None:
             )
             return act
 
-    returned_types = {
+    unmatched_types = {
         (act.get("activityType", {}).get("typeKey") or "").lower()
         for act in activities
+        if (act.get("activityType", {}).get("typeKey") or "").lower()
+        not in GARMIN_INDOOR_ACTIVITY_TYPES
     }
     log.warning(
         "No matching Garmin indoor activity found within %ds of ICG start. "
-        "Returned types: %s — expected one of: %s",
+        "Unrecognized types seen: %s — expected one of: %s",
         TIME_MATCH_TOLERANCE_S,
-        sorted(returned_types) if returned_types else "(none)",
+        sorted(unmatched_types) if unmatched_types else "(none)",
         sorted(GARMIN_INDOOR_ACTIVITY_TYPES),
     )
     return None

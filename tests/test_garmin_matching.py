@@ -1,20 +1,19 @@
 """
-Unit tests for PR #14: expand Garmin activity types and add diagnostic logging.
+Tests for garmin_find_matching_activity: activity type matching and diagnostic logging.
 
 Covers:
 - fitness_equipment and other type activities now match
 - indoor_cycling, cardio, cycling still match (regression)
 - Unknown types don't match
 - Debug log shows all returned activities with id, name, type, start_time
-- Warning on no-match shows returned types AND expected set
+- Warning on no-match shows unrecognized types AND expected set
 """
 
-import importlib
 import logging
 import os
 import sys
 import types
-from pathlib import Path
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 
@@ -56,6 +55,7 @@ sync = _load_sync()
 # ---------------------------------------------------------------------------
 
 _BASE_EPOCH = 1_700_000_000  # arbitrary fixed timestamp
+_START_GMT = datetime.fromtimestamp(_BASE_EPOCH, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _make_garmin_activity(
@@ -88,15 +88,12 @@ class TestGarminActivityTypeMatching:
     """garmin_find_matching_activity should accept the types in
     GARMIN_INDOOR_ACTIVITY_TYPES and reject anything else."""
 
-    # Start time exactly at _BASE_EPOCH → gap = 0 → within tolerance
-    _START_GMT = "2023-11-14 22:13:20"  # == datetime.utcfromtimestamp(_BASE_EPOCH)
-
     def _run(self, type_key: str) -> dict | None:
         activity = _make_garmin_activity(
             activity_id=1,
             name="Morning Ride",
             type_key=type_key,
-            start_gmt=self._START_GMT,
+            start_gmt=_START_GMT,
         )
         with _patch_garmin_session([activity]):
             return sync.garmin_find_matching_activity(_BASE_EPOCH)
@@ -172,11 +169,9 @@ class TestDebugLogging:
     """garmin_find_matching_activity should emit a DEBUG log that contains
     each returned activity's id, name, type, and start_time."""
 
-    _START_GMT = "2023-11-14 22:13:20"
-
     def test_debug_log_contains_activity_id(self, caplog):
         activities = [
-            _make_garmin_activity(99, "Spin Class", "indoor_cycling", self._START_GMT)
+            _make_garmin_activity(99, "Spin Class", "indoor_cycling", _START_GMT)
         ]
         with _patch_garmin_session(activities):
             with caplog.at_level(logging.DEBUG, logger="spin-sync"):
@@ -186,7 +181,7 @@ class TestDebugLogging:
 
     def test_debug_log_contains_activity_name(self, caplog):
         activities = [
-            _make_garmin_activity(99, "Morning Spin", "indoor_cycling", self._START_GMT)
+            _make_garmin_activity(99, "Morning Spin", "indoor_cycling", _START_GMT)
         ]
         with _patch_garmin_session(activities):
             with caplog.at_level(logging.DEBUG, logger="spin-sync"):
@@ -196,7 +191,7 @@ class TestDebugLogging:
 
     def test_debug_log_contains_activity_type(self, caplog):
         activities = [
-            _make_garmin_activity(99, "Spin", "fitness_equipment", self._START_GMT)
+            _make_garmin_activity(99, "Spin", "fitness_equipment", _START_GMT)
         ]
         with _patch_garmin_session(activities):
             with caplog.at_level(logging.DEBUG, logger="spin-sync"):
@@ -206,18 +201,18 @@ class TestDebugLogging:
 
     def test_debug_log_contains_start_time(self, caplog):
         activities = [
-            _make_garmin_activity(99, "Spin", "indoor_cycling", self._START_GMT)
+            _make_garmin_activity(99, "Spin", "indoor_cycling", _START_GMT)
         ]
         with _patch_garmin_session(activities):
             with caplog.at_level(logging.DEBUG, logger="spin-sync"):
                 sync.garmin_find_matching_activity(_BASE_EPOCH)
 
-        assert self._START_GMT in caplog.text
+        assert _START_GMT in caplog.text
 
     def test_debug_log_shows_count(self, caplog):
         activities = [
-            _make_garmin_activity(1, "A", "indoor_cycling", self._START_GMT),
-            _make_garmin_activity(2, "B", "running", self._START_GMT),
+            _make_garmin_activity(1, "A", "indoor_cycling", _START_GMT),
+            _make_garmin_activity(2, "B", "running", _START_GMT),
         ]
         with _patch_garmin_session(activities):
             with caplog.at_level(logging.DEBUG, logger="spin-sync"):
@@ -226,16 +221,15 @@ class TestDebugLogging:
         # "2 activities" or "2 activit..." — the count should appear
         assert "2" in caplog.text
 
-    def test_debug_log_emitted_at_debug_level(self, caplog):
-        """Debug log should NOT appear at INFO level."""
+    def test_debug_log_suppressed_at_info_level(self, caplog):
+        """Debug log should NOT appear when log level is INFO."""
         activities = [
-            _make_garmin_activity(99, "Spin", "indoor_cycling", self._START_GMT)
+            _make_garmin_activity(99, "Spin", "indoor_cycling", _START_GMT)
         ]
         with _patch_garmin_session(activities):
             with caplog.at_level(logging.INFO, logger="spin-sync"):
                 sync.garmin_find_matching_activity(_BASE_EPOCH)
 
-        # At INFO level, debug messages should not be captured
         assert "activityId" not in caplog.text
 
 
@@ -245,16 +239,14 @@ class TestDebugLogging:
 
 class TestNoMatchWarning:
     """When no activity matches, the WARNING log must include:
-    1. The actual types returned by Garmin
+    1. The unrecognized types returned by Garmin
     2. The expected GARMIN_INDOOR_ACTIVITY_TYPES set
     """
-
-    _START_GMT = "2023-11-14 22:13:20"
 
     def _run_no_match(self, caplog, type_key: str = "running"):
         """Run with an activity that won't match and capture WARNING logs."""
         activities = [
-            _make_garmin_activity(1, "Morning Run", type_key, self._START_GMT)
+            _make_garmin_activity(1, "Morning Run", type_key, _START_GMT)
         ]
         with _patch_garmin_session(activities):
             with caplog.at_level(logging.WARNING, logger="spin-sync"):
@@ -298,8 +290,8 @@ class TestNoMatchWarning:
     def test_no_match_warning_with_multiple_non_matching_types(self, caplog):
         """Multiple non-matching types all appear in the warning."""
         activities = [
-            _make_garmin_activity(1, "Run", "running", self._START_GMT),
-            _make_garmin_activity(2, "Swim", "swimming", self._START_GMT),
+            _make_garmin_activity(1, "Run", "running", _START_GMT),
+            _make_garmin_activity(2, "Swim", "swimming", _START_GMT),
         ]
         with _patch_garmin_session(activities):
             with caplog.at_level(logging.WARNING, logger="spin-sync"):
