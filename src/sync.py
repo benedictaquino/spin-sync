@@ -63,7 +63,9 @@ TARGET_ACTIVITY_TYPES = {"VirtualRide", "Ride"}
 # Strava / Garmin activity types that indicate a plain watch recording
 # (the empty duplicate we want to remove)
 WATCH_ACTIVITY_TYPES_STRAVA = {"Ride", "VirtualRide", "workout"}
-GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio", "cycling"}
+# Includes "fitness_equipment" and "other" to cover the Garmin watch's reported
+# activity type when recording a spin class without a specific sport profile.
+GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio", "cycling", "fitness_equipment", "other"}
 
 # How far back to look on the very first run (seconds)
 LOOKBACK_SECONDS = int(os.environ.get("LOOKBACK_SECONDS", str(6 * 3600)))
@@ -344,6 +346,22 @@ def garmin_find_matching_activity(start_epoch: int) -> dict | None:
         log.warning("Could not fetch Garmin activities for %s: %s", date_str, exc)
         return None
 
+    log.debug(
+        "Garmin returned %d activit%s for %s: %s",
+        len(activities),
+        "y" if len(activities) == 1 else "ies",
+        date_str,
+        [
+            {
+                "activityId": a.get("activityId"),
+                "activityName": a.get("activityName"),
+                "type": (a.get("activityType", {}).get("typeKey") or ""),
+                "startTimeGMT": a.get("startTimeGMT"),
+            }
+            for a in activities
+        ],
+    )
+
     for act in activities:
         act_type = (act.get("activityType", {}).get("typeKey") or "").lower()
         if act_type not in GARMIN_INDOOR_ACTIVITY_TYPES:
@@ -441,8 +459,21 @@ def run() -> None:
     all_activities = strava_get_recent_activities(access_token, after_epoch)
     candidates     = [
         a for a in all_activities
-        if a["type"] in TARGET_ACTIVITY_TYPES and a["id"] not in synced_ids
+        if a["type"] in TARGET_ACTIVITY_TYPES
+        and a["id"] not in synced_ids
+        and a.get("device_watts") is True
     ]
+    skipped = [
+        a for a in all_activities
+        if a["type"] in TARGET_ACTIVITY_TYPES
+        and a["id"] not in synced_ids
+        and a.get("device_watts") is not True
+    ]
+    for a in skipped:
+        log.debug(
+            "Skipping '%s' (Strava id=%s): device_watts not set, likely a watch recording.",
+            a.get("name", a["id"]), a["id"],
+        )
     log.info("Found %d total activities, %d new ICG candidate(s).", len(all_activities), len(candidates))
 
     for icg_activity in candidates:
