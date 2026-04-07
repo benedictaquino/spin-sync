@@ -61,17 +61,19 @@ def strava_access_token() -> str:
 
 
 def strava_fetch_streams(activity_id: int, token: str) -> list[RecordSnapshot]:
-    resp = requests.get(
+    activity_resp = requests.get(
         f"https://www.strava.com/api/v3/activities/{activity_id}",
         headers={"Authorization": f"Bearer {token}"},
         timeout=15,
     )
-    resp.raise_for_status()
-    start_epoch = int(
+    activity_resp.raise_for_status()
+    activity = activity_resp.json()
+    start_epoch      = int(
         __import__("datetime").datetime
-        .fromisoformat(resp.json()["start_date"].replace("Z", "+00:00"))
+        .fromisoformat(activity["start_date"].replace("Z", "+00:00"))
         .timestamp()
     )
+    total_distance_m = activity.get("distance", 0)
 
     resp = requests.get(
         f"https://www.strava.com/api/v3/activities/{activity_id}/streams",
@@ -89,6 +91,15 @@ def strava_fetch_streams(activity_id: int, token: str) -> list[RecordSnapshot]:
 
     if not time_data:
         raise RuntimeError(f"No time stream data for Strava activity {activity_id}")
+
+    # Fall back to linear interpolation when the distance stream is absent.
+    if not distance and total_distance_m > 0:
+        total_time = time_data[-1] or 1
+        distance = [total_distance_m * t / total_time for t in time_data]
+        log.info(
+            "No distance stream for %s; interpolated from total distance %.0f m.",
+            activity_id, total_distance_m,
+        )
 
     start_ms = start_epoch * 1000
     records = [
