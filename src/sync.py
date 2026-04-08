@@ -186,12 +186,15 @@ class GarminSession:
                 f"Garmin session file not found: {session_file}\n"
                 "Run  scripts/garmin_auth.py  to authenticate via browser first."
             )
+        session_data = json.loads(session_file.read_text())
         self._pw = sync_playwright().start()
         self._context = self._pw.chromium.launch_persistent_context(
             str(self.BROWSER_PROFILE_DIR),
             headless=True,
             args=["--disable-blink-features=AutomationControlled"],
         )
+        if session_data.get("cookies"):
+            self._context.add_cookies(session_data["cookies"])
         self._page = (
             self._context.pages[0] if self._context.pages else self._context.new_page()
         )

@@ -1,0 +1,56 @@
+name: spin-sync
+
+on:
+  # ~15 min after each class ends (Eastern Time, scheduled using EST=UTC-5;
+  # during EDT the run is ~1 hr later in local time, still well after class ends)
+  schedule:
+    - cron: "15 13 * * 1"  # Monday    8:15 AM EST  (class ends 8:00 AM)
+    - cron: "0  18 * * 2"  # Tuesday   1:00 PM EST  (class ends 12:45 PM)
+    - cron: "15 13 * * 3"  # Wednesday 8:15 AM EST  (class ends 8:00 AM)
+    - cron: "15 16 * * 6"  # Saturday  11:15 AM EST (class ends 11:00 AM)
+    - cron: "45 15 * * 0"  # Sunday    10:45 AM EST (class ends 10:30 AM)
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Install Playwright browser
+        run: uv run playwright install chromium
+
+      - name: Restore state
+        uses: actions/cache@v4
+        with:
+          path: ~/.spin-sync-state.json
+          key: spin-sync-state-v1
+          restore-keys: spin-sync-state-v1
+
+      - name: Write Garmin session file
+        run: |
+          mkdir -p ~/.spin-sync-chromium-profile
+          echo '${{ secrets.GARMIN_SESSION_JSON }}' > ~/.spin-sync-garmin-session.json
+          chmod 600 ~/.spin-sync-garmin-session.json
+
+      - name: Run sync
+        env:
+          STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
+          STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+          STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
+          LOOKBACK_SECONDS: "7200"
+        run: uv run python src/sync.py
+
+      - name: Rotate Strava refresh token
+        if: hashFiles('.strava_refresh_token') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh secret set STRAVA_REFRESH_TOKEN \
+            --body "$(cat .strava_refresh_token)" \
+            --repo "${{ github.repository }}"
