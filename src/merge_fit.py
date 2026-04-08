@@ -40,6 +40,17 @@ MAX_INTERPOLATION_GAP_S = 5
 _GLOBAL_ID_RECORD  = 20
 _GLOBAL_ID_LAP     = 19
 _GLOBAL_ID_SESSION = 18
+_GLOBAL_ID_SPORT   = 12
+
+# Field IDs for sport/sub_sport (differ between Sport and Session messages).
+_FID_SPORT_MSG_SPORT      = 0   # field 0 in Sport message (global_id=12)
+_FID_SPORT_MSG_SUB_SPORT  = 1   # field 1 in Sport message (global_id=12)
+_FID_SESSION_SPORT        = 5   # field 5 in Session message (global_id=18)
+_FID_SESSION_SUB_SPORT    = 6   # field 6 in Session message (global_id=18)
+
+# FIT enum values for Indoor Cycling (sport=2 Cycling, sub_sport=6 Indoor_Cycling).
+_SPORT_CYCLING            = 2
+_SUB_SPORT_INDOOR_CYCLING = 6
 
 # FIT field numbers inside a record message.
 _FID_TIMESTAMP     = 253
@@ -277,6 +288,16 @@ def merge(garmin_path: Path, icg_records: list[RecordSnapshot], output_path: Pat
             if global_id in (_GLOBAL_ID_LAP, _GLOBAL_ID_SESSION):
                 total_dist_field = next((f for f in fields if f["id"] == _FID_TOTAL_DISTANCE), None)
 
+            # For Sport/Session: locate sport and sub_sport fields for type conversion.
+            sport_field = None
+            sub_sport_field = None
+            if global_id == _GLOBAL_ID_SPORT:
+                sport_field = next((f for f in fields if f["id"] == _FID_SPORT_MSG_SPORT), None)
+                sub_sport_field = next((f for f in fields if f["id"] == _FID_SPORT_MSG_SUB_SPORT), None)
+            elif global_id == _GLOBAL_ID_SESSION:
+                sport_field = next((f for f in fields if f["id"] == _FID_SESSION_SPORT), None)
+                sub_sport_field = next((f for f in fields if f["id"] == _FID_SESSION_SUB_SPORT), None)
+
             definitions[local_id] = {
                 "global_id":         global_id,
                 "endian":            endian,
@@ -286,6 +307,8 @@ def merge(garmin_path: Path, icg_records: list[RecordSnapshot], output_path: Pat
                 "extra_fields":      extra_fields,
                 "overwrite_fields":  overwrite_fields,
                 "total_dist_field":  total_dist_field,
+                "sport_field":       sport_field,
+                "sub_sport_field":   sub_sport_field,
             }
 
             if extra_fields:
@@ -339,12 +362,23 @@ def merge(garmin_path: Path, icg_records: list[RecordSnapshot], output_path: Pat
                 new_records += bytes(rec) + _encode_extra(d["extra_fields"], endian, icg)
                 if icg is not None:
                     injected += 1
-            elif (d["global_id"] in (_GLOBAL_ID_LAP, _GLOBAL_ID_SESSION)
-                  and d["total_dist_field"] is not None
-                  and total_distance_raw > 0):
+            elif d["global_id"] in (_GLOBAL_ID_LAP, _GLOBAL_ID_SESSION):
                 rec = bytearray(raw[offset: offset + total_size])
-                off = 1 + d["total_dist_field"]["data_offset"]
-                struct.pack_into(d["endian"] + "I", rec, off, total_distance_raw)
+                if d["total_dist_field"] is not None and total_distance_raw > 0:
+                    off = 1 + d["total_dist_field"]["data_offset"]
+                    struct.pack_into(d["endian"] + "I", rec, off, total_distance_raw)
+                if d["global_id"] == _GLOBAL_ID_SESSION:
+                    if d["sport_field"] is not None:
+                        rec[1 + d["sport_field"]["data_offset"]] = _SPORT_CYCLING
+                    if d["sub_sport_field"] is not None:
+                        rec[1 + d["sub_sport_field"]["data_offset"]] = _SUB_SPORT_INDOOR_CYCLING
+                new_records += bytes(rec)
+            elif d["global_id"] == _GLOBAL_ID_SPORT:
+                rec = bytearray(raw[offset: offset + total_size])
+                if d["sport_field"] is not None:
+                    rec[1 + d["sport_field"]["data_offset"]] = _SPORT_CYCLING
+                if d["sub_sport_field"] is not None:
+                    rec[1 + d["sub_sport_field"]["data_offset"]] = _SUB_SPORT_INDOOR_CYCLING
                 new_records += bytes(rec)
             else:
                 new_records += bytes(raw[offset: offset + total_size])
