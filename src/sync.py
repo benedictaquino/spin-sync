@@ -56,7 +56,7 @@ GARMIN_SESSION_FILE = Path(
 )
 
 # Strava types produced by the ICG app
-TARGET_ACTIVITY_TYPES = {"VirtualRide"}
+TARGET_ACTIVITY_TYPES = {"VirtualRide", "Ride"}
 
 GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio", "cycling", "fitness_equipment", "other"}
 
@@ -460,6 +460,15 @@ def run() -> None:
         log.debug(
             "Skipping '%s' (Strava id=%s): device_watts not set, likely a watch recording.",
             a.get("name", a["id"]), a["id"],
+        )
+    type_excluded = [
+        a for a in all_activities
+        if a["type"] not in TARGET_ACTIVITY_TYPES and a["id"] not in synced_ids
+    ]
+    for a in type_excluded:
+        log.info(
+            "Skipping '%s' (Strava id=%s, type=%s): not in TARGET_ACTIVITY_TYPES %s.",
+            a.get("name", a["id"]), a["id"], a.get("type"), sorted(TARGET_ACTIVITY_TYPES),
         )
     log.info("Found %d total activities, %d new ICG candidate(s).", len(all_activities), len(candidates))
 
