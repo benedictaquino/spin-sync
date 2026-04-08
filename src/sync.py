@@ -222,7 +222,13 @@ class GarminSession:
         finally:
             self._page.remove_listener("request", on_request)
         self._csrf_token = captured.get("csrf")
-        log.info("Garmin browser session ready (CSRF: %s…)", (self._csrf_token or "none")[:8])
+        if not self._csrf_token:
+            current_url = self._page.url
+            raise RuntimeError(
+                f"Garmin session expired (browser landed on {current_url!r} instead of the app). "
+                "Re-run  scripts/garmin_auth.py  to refresh your Garmin session."
+            )
+        log.info("Garmin browser session ready (CSRF: %s…)", self._csrf_token[:8])
 
     def _fetch(self, method: str, url: str) -> str:
         """Run an HTTP request inside the browser via fetch(), returning the response body."""
