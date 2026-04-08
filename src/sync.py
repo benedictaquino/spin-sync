@@ -58,7 +58,7 @@ GARMIN_SESSION_FILE = Path(
 # Strava types produced by the ICG app
 TARGET_ACTIVITY_TYPES = {"VirtualRide"}
 
-GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio"}
+GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio", "cycling", "fitness_equipment", "other"}
 
 # How far back to look on the very first run (seconds)
 LOOKBACK_SECONDS = int(os.environ.get("LOOKBACK_SECONDS", str(6 * 3600)))
@@ -433,7 +433,8 @@ def run() -> None:
     state       = load_state()
     synced_ids  = set(state.get("synced_ids", []))
     last_run    = state.get("last_run_epoch", 0)
-    after_epoch = last_run if last_run else int(time.time()) - LOOKBACK_SECONDS
+    lookback_epoch = int(time.time()) - LOOKBACK_SECONDS
+    after_epoch = min(last_run, lookback_epoch) if last_run else lookback_epoch
     now_epoch   = int(time.time())
 
     log.info(
