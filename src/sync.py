@@ -58,7 +58,7 @@ GARMIN_SESSION_FILE = Path(
 # Strava types produced by the ICG app
 TARGET_ACTIVITY_TYPES = {"VirtualRide", "Ride"}
 
-GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio", "cycling", "fitness_equipment", "other"}
+GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "indoor_cardio", "cardio", "cycling", "fitness_equipment", "other"}
 
 # How far back to look on the very first run (seconds)
 LOOKBACK_SECONDS = int(os.environ.get("LOOKBACK_SECONDS", str(6 * 3600)))
