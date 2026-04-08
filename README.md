@@ -111,7 +111,8 @@ See `.env.example` for all options.  The most important ones:
 | Variable | Description |
 |---|---|
 | `LOOKBACK_SECONDS` | How far back to look on the first run. Default: 6 hours. |
-| *(activity types)* | Which Strava activity types trigger a sync. Hardcoded in `src/sync.py` (`VirtualRide`, `Ride`); edit that file to change. |
+
+The Strava activity types that trigger a sync (`VirtualRide`, `Ride`) are hardcoded in `src/sync.py`; edit that file to change them.
 
 ## Troubleshooting
 
