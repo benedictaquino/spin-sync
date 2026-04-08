@@ -56,9 +56,9 @@ GARMIN_SESSION_FILE = Path(
 )
 
 # Strava types produced by the ICG app
-TARGET_ACTIVITY_TYPES = {"VirtualRide"}
+TARGET_ACTIVITY_TYPES = {"VirtualRide", "Ride"}
 
-GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio"}
+GARMIN_INDOOR_ACTIVITY_TYPES = {"indoor_cycling", "cardio", "cycling", "fitness_equipment", "other"}
 
 # How far back to look on the very first run (seconds)
 LOOKBACK_SECONDS = int(os.environ.get("LOOKBACK_SECONDS", str(6 * 3600)))
@@ -210,10 +210,25 @@ class GarminSession:
                 captured["csrf"] = request.headers.get("connect-csrf-token")  # type: ignore[attr-defined]
 
         self._page.on("request", on_request)
-        self._page.goto(f"{self.BASE}/app/activities", wait_until="networkidle", timeout=30_000)
-        self._page.remove_listener("request", on_request)
+        try:
+            # "domcontentloaded" avoids timing out on Garmin's persistent background
+            # requests that prevent "networkidle" from ever being reached.
+            # The CSRF token arrives on the first gc-api/ request fired by the SPA
+            # after initialisation — poll for it for up to 30 s post-load.
+            self._page.goto(f"{self.BASE}/app/activities", wait_until="domcontentloaded", timeout=60_000)
+            deadline = time.monotonic() + 30
+            while not captured.get("csrf") and time.monotonic() < deadline:
+                self._page.wait_for_timeout(500)
+        finally:
+            self._page.remove_listener("request", on_request)
         self._csrf_token = captured.get("csrf")
-        log.info("Garmin browser session ready (CSRF: %s…)", (self._csrf_token or "none")[:8])
+        if not self._csrf_token:
+            current_url = self._page.url
+            raise RuntimeError(
+                f"Garmin session expired (browser landed on {current_url!r} instead of the app). "
+                "Re-run  scripts/garmin_auth.py  to refresh your Garmin session."
+            )
+        log.info("Garmin browser session ready (CSRF: %s…)", self._csrf_token[:8])
 
     def _fetch(self, method: str, url: str) -> str:
         """Run an HTTP request inside the browser via fetch(), returning the response body."""
@@ -317,11 +332,7 @@ def garmin_find_matching_activity(start_epoch: int) -> dict | None:
         start_epoch - TIME_MATCH_TOLERANCE_S, tz=timezone.utc
     ).strftime("%Y-%m-%d")
 
-    try:
-        activities = garmin_session().get_activities_by_date(date_str, date_str)
-    except Exception as exc:
-        log.warning("Could not fetch Garmin activities for %s: %s", date_str, exc)
-        return None
+    activities = garmin_session().get_activities_by_date(date_str, date_str)
 
     log.debug(
         "Garmin returned %d activit%s for %s: %s",
@@ -433,7 +444,8 @@ def run() -> None:
     state       = load_state()
     synced_ids  = set(state.get("synced_ids", []))
     last_run    = state.get("last_run_epoch", 0)
-    after_epoch = last_run if last_run else int(time.time()) - LOOKBACK_SECONDS
+    lookback_epoch = int(time.time()) - LOOKBACK_SECONDS
+    after_epoch = min(last_run, lookback_epoch) if last_run else lookback_epoch
     now_epoch   = int(time.time())
 
     log.info(
@@ -459,6 +471,15 @@ def run() -> None:
         log.debug(
             "Skipping '%s' (Strava id=%s): device_watts not set, likely a watch recording.",
             a.get("name", a["id"]), a["id"],
+        )
+    type_excluded = [
+        a for a in all_activities
+        if a["type"] not in TARGET_ACTIVITY_TYPES and a["id"] not in synced_ids
+    ]
+    for a in type_excluded:
+        log.info(
+            "Skipping '%s' (Strava id=%s, type=%s): not in TARGET_ACTIVITY_TYPES %s.",
+            a.get("name", a["id"]), a["id"], a.get("type"), sorted(TARGET_ACTIVITY_TYPES),
         )
     log.info("Found %d total activities, %d new ICG candidate(s).", len(all_activities), len(candidates))
 
@@ -489,7 +510,14 @@ def run() -> None:
                 continue
 
             # 2. Find matching Garmin Connect watch activity
-            garmin_act = garmin_find_matching_activity(start_epoch)
+            try:
+                garmin_act = garmin_find_matching_activity(start_epoch)
+            except Exception as exc:
+                log.warning(
+                    "Could not fetch Garmin activities for '%s': %s — will retry on next run.",
+                    activity_name, exc,
+                )
+                continue  # do NOT mark as synced; retry next run
             if garmin_act is None:
                 log.warning(
                     "No Garmin watch activity found for '%s'. "
