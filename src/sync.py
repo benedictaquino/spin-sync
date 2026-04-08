@@ -210,8 +210,17 @@ class GarminSession:
                 captured["csrf"] = request.headers.get("connect-csrf-token")  # type: ignore[attr-defined]
 
         self._page.on("request", on_request)
-        self._page.goto(f"{self.BASE}/app/activities", wait_until="networkidle", timeout=30_000)
-        self._page.remove_listener("request", on_request)
+        try:
+            # "domcontentloaded" avoids timing out on Garmin's persistent background
+            # requests that prevent "networkidle" from ever being reached.
+            # The CSRF token arrives on the first gc-api/ request fired by the SPA
+            # after initialisation — poll for it for up to 30 s post-load.
+            self._page.goto(f"{self.BASE}/app/activities", wait_until="domcontentloaded", timeout=60_000)
+            deadline = time.monotonic() + 30
+            while not captured.get("csrf") and time.monotonic() < deadline:
+                self._page.wait_for_timeout(500)
+        finally:
+            self._page.remove_listener("request", on_request)
         self._csrf_token = captured.get("csrf")
         log.info("Garmin browser session ready (CSRF: %s…)", (self._csrf_token or "none")[:8])
 
@@ -317,11 +326,7 @@ def garmin_find_matching_activity(start_epoch: int) -> dict | None:
         start_epoch - TIME_MATCH_TOLERANCE_S, tz=timezone.utc
     ).strftime("%Y-%m-%d")
 
-    try:
-        activities = garmin_session().get_activities_by_date(date_str, date_str)
-    except Exception as exc:
-        log.warning("Could not fetch Garmin activities for %s: %s", date_str, exc)
-        return None
+    activities = garmin_session().get_activities_by_date(date_str, date_str)
 
     log.debug(
         "Garmin returned %d activit%s for %s: %s",
@@ -499,7 +504,14 @@ def run() -> None:
                 continue
 
             # 2. Find matching Garmin Connect watch activity
-            garmin_act = garmin_find_matching_activity(start_epoch)
+            try:
+                garmin_act = garmin_find_matching_activity(start_epoch)
+            except Exception as exc:
+                log.warning(
+                    "Could not fetch Garmin activities for '%s': %s — will retry on next run.",
+                    activity_name, exc,
+                )
+                continue  # do NOT mark as synced; retry next run
             if garmin_act is None:
                 log.warning(
                     "No Garmin watch activity found for '%s'. "
